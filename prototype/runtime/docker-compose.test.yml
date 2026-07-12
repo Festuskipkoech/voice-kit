@@ -1,0 +1,35 @@
+services:
+
+  stt-test:
+    build:
+      context: ..
+      dockerfile: runtime/stt/Dockerfile
+    ports:
+      - "8011:8001"
+    environment:
+      VOICEKIT_STT_MODEL: simulated
+      VOICEKIT_STT_VARIANT: small
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health')"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 15s
+    mem_limit: 256m
+
+  tts-test:
+    build:
+      context: ..
+      dockerfile: runtime/tts/Dockerfile
+    ports:
+      - "8012:8002"
+    environment:
+      VOICEKIT_TTS_MODEL: simulated
+      VOICEKIT_TTS_VOICE: default
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8002/health')"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 15s
+    mem_limit: 256m

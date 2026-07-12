@@ -1,0 +1,33 @@
+[project]
+name = "voicekit"
+version = "0.1.0"
+description = "Self-hosted voice agent infrastructure"
+requires-python = ">=3.11"
+dependencies = [
+    "typer",
+    "rich",
+    "pyyaml",
+    "httpx",
+    "websockets",
+    "numpy",
+    "fastapi",
+    "uvicorn",
+    "python-dotenv",
+    "pytest",
+    "pytest-asyncio",
+    "anyio",
+]
+
+[project.scripts]
+voicekit = "voicekit.cli:app"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["voicekit"]

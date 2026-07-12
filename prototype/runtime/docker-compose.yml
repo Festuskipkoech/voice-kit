@@ -1,0 +1,69 @@
+services:
+
+  stt:
+    build:
+      context: ..
+      dockerfile: runtime/stt/Dockerfile
+    ports:
+      - "8001:8001"
+    environment:
+      VOICEKIT_STT_MODEL: ${VOICEKIT_STT_MODEL:-simulated}
+      VOICEKIT_STT_VARIANT: ${VOICEKIT_STT_VARIANT:-small}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
+    mem_limit: 512m
+
+  tts:
+    build:
+      context: ..
+      dockerfile: runtime/tts/Dockerfile
+    ports:
+      - "8002:8002"
+    environment:
+      VOICEKIT_TTS_MODEL: ${VOICEKIT_TTS_MODEL:-simulated}
+      VOICEKIT_TTS_VOICE: ${VOICEKIT_TTS_VOICE:-default}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8002/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
+    mem_limit: 512m
+
+  gateway:
+    build:
+      context: ..
+      dockerfile: runtime/gateway/Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      VOICEKIT_PROJECT: ${VOICEKIT_PROJECT:-voicekit}
+      VOICEKIT_STT_MODEL: ${VOICEKIT_STT_MODEL:-simulated}
+      VOICEKIT_STT_VARIANT: ${VOICEKIT_STT_VARIANT:-small}
+      VOICEKIT_TTS_MODEL: ${VOICEKIT_TTS_MODEL:-simulated}
+      VOICEKIT_TTS_VOICE: ${VOICEKIT_TTS_VOICE:-default}
+      VOICEKIT_LLM_PROVIDER: ${VOICEKIT_LLM_PROVIDER:-simulated}
+      VOICEKIT_LLM_MODEL: ${VOICEKIT_LLM_MODEL:-simulated}
+      VOICEKIT_LLM_API_KEY: ${VOICEKIT_LLM_API_KEY:-}
+      VOICEKIT_VAD_ENABLED: ${VOICEKIT_VAD_ENABLED:-true}
+      VOICEKIT_VAD_SENSITIVITY: ${VOICEKIT_VAD_SENSITIVITY:-0.5}
+      VOICEKIT_SYSTEM_PROMPT: ${VOICEKIT_SYSTEM_PROMPT:-You are a helpful voice assistant.}
+    depends_on:
+      stt:
+        condition: service_healthy
+      tts:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+    mem_limit: 256m

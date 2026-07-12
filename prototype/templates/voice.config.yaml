@@ -1,0 +1,23 @@
+project: my-agent
+
+stt:
+  model: simulated
+  variant: small
+
+tts:
+  model: simulated
+  voice: default
+
+vad:
+  enabled: true
+  sensitivity: 0.5
+
+llm:
+  provider: simulated
+  model: simulated
+  api_key: ""
+
+system_prompt: >
+  You are a helpful voice assistant.
+  Keep responses concise and natural.
+  Never use markdown — you are speaking out loud.
