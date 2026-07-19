@@ -1,0 +1,11 @@
+.env
+runtime/.env
+*.env
+__pycache__/
+.venv/
+*.pyc
+.pytest_cache/
+tests/results/
+voicekit/.venv/
+voicekit/.env
+voicekit/runtime/.env

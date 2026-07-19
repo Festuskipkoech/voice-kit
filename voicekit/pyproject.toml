@@ -1,0 +1,51 @@
+[project]
+name = "voicekit"
+version = "0.1.0"
+description = "Self-hosted voice agent infrastructure — STT, TTS, VAD, and LLM routing as a Python package"
+requires-python = ">=3.11,<3.14"
+dependencies = [
+    "typer",
+    "rich",
+    "pyyaml",
+    "httpx",
+    "websockets",
+    "numpy>=1.26.0",
+    "fastapi",
+    "uvicorn",
+    "python-dotenv",
+    "silero-vad",
+    "faster-whisper",
+    "anthropic>=0.40.0",
+    "redis>=5.0.0",
+    "torchaudio",
+    "setuptools",
+    "soundfile",
+]
+
+[project.optional-dependencies]
+chatterbox = [
+    "chatterbox-tts>=0.1.7",
+    "resemble-perth>=1.0.1",
+    "numba>=0.57.0",
+    "llvmlite>=0.40.0",
+    "setuptools",
+]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+    "anyio",
+]
+
+[project.scripts]
+voicekit = "voicekit.cli:app"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["voicekit"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
