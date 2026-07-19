@@ -6,3 +6,6 @@ __pycache__/
 *.pyc
 .pytest_cache/
 tests/results/
+voicekit/.venv/
+voicekit/.env
+voicekit/runtime/.env
