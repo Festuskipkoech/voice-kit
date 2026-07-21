@@ -44,9 +44,9 @@ def _load_provider(model: str, voice: str):
         from voicekit.providers.tts.chatterbox import ChatterboxTTS
         return ChatterboxTTS(voice=voice)
 
-    # elif model == "kokoro":
-    #     from voicekit.providers.tts.kokoro import KokoroTTS
-    #     return KokoroTTS(voice=voice)
+    elif model == "kokoro":
+        from voicekit.providers.tts.kokoro import KokoroTTS
+        return KokoroTTS(voice=voice)
 
     else:
         raise ValueError(

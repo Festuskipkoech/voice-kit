@@ -1,56 +1,59 @@
+"""
+Provider registry.
+
+Maps model name strings from config to provider classes.
+Adding a new model: write one class, add one line here.
+Nothing else changes.
+"""
+
 from voicekit.providers.base import STTProvider, TTSProvider, LLMProvider
-from voicekit.providers.stt.whisper import WhisperSTT
-from voicekit.providers.tts.chatterbox import ChatterboxTTS
-from voicekit.providers.llm.claude import ClaudeProvider
- 
-# adding a new model means two things only:
-# 1. write a class in providers/stt/, providers/tts/, or providers/llm/
-#    implementing the relevant abstract base class from providers/base.py
-# 2. add one entry to the relevant registry dict below
-# nothing else in the codebase changes
- 
-STT_REGISTRY: dict[str, type[STTProvider]] = {
-    "whisper": WhisperSTT,
-    # "parakeet": ParakeetSTT,    <- add in future
-}
- 
-TTS_REGISTRY: dict[str, type[TTSProvider]] = {
-    "chatterbox-turbo": ChatterboxTTS,
-    # "kokoro": KokoroTTS,        <- Phase 2
-}
- 
-LLM_REGISTRY: dict[str, type[LLMProvider]] = {
-    "anthropic": ClaudeProvider,
-    # "openai": OpenAIProvider,   <- Phase 2
-}
+
 
 def get_stt(config) -> STTProvider:
-    cls = STT_REGISTRY.get(config.stt.model)
-    if not cls:
-        available = list(STT_REGISTRY.keys())
+    model = config.stt.model
+
+    if model == "whisper":
+        from voicekit.providers.stt.whisper import WhisperSTT
+        return WhisperSTT(variant=config.stt.variant)
+
+    else:
         raise ValueError(
-            f"Unknown STT model '{config.stt.model}'. "
-            f"Available: {available}"
+            f"Unknown STT model: '{model}'. "
+            f"Available: whisper, simulated"
         )
-    return cls(variant=config.stt.variant)
+
 
 def get_tts(config) -> TTSProvider:
-    cls = TTS_REGISTRY.get(config.tts.model)
-    if not cls:
-        available = list(TTS_REGISTRY.keys())
+    model = config.tts.model
+
+    if model == "chatterbox-turbo":
+        from voicekit.providers.tts.chatterbox import ChatterboxTTS
+        return ChatterboxTTS(voice=config.tts.voice)
+
+    elif model == "kokoro":
+        from voicekit.providers.tts.kokoro import KokoroTTS
+        return KokoroTTS(voice=config.tts.voice)
+
+    else:
         raise ValueError(
-            f"Unknown TTS model '{config.tts.model}'. "
-            f"Available: {available}"
+            f"Unknown TTS model: '{model}'. "
+            f"Available: chatterbox-turbo, kokoro, simulated"
         )
-    return cls(voice=config.tts.voice) 
- 
+
+
 def get_llm(config) -> LLMProvider:
-    cls = LLM_REGISTRY.get(config.llm.provider)
-    if not cls:
-        available = list(LLM_REGISTRY.keys())
+    provider = config.llm.provider
+
+    if provider == "anthropic":
+        from voicekit.providers.llm.claude import ClaudeProvider
+        return ClaudeProvider(model=config.llm.model)
+
+    # elif provider == "openai":
+    #     from voicekit.providers.llm.openai_provider import OpenAIProvider
+    #     return OpenAIProvider(model=config.llm.model)
+    
+    else:
         raise ValueError(
-            f"Unknown LLM provider '{config.llm.provider}'. "
-            f"Available: {available}"
+            f"Unknown LLM provider: '{provider}'. "
+            f"Available: anthropic, openai, simulated"
         )
-    return cls(model=config.llm.model)
- 

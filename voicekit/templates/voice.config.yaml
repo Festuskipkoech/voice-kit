@@ -2,15 +2,15 @@ project: my-agent
 
 stt:
   model: whisper
-  variant: tiny          # tiny / base / small / medium / large-v3
+  variant: tiny # tiny / base / small / medium / large-v3
 
 tts:
-  model: chatterbox-turbo
-  voice: default          # default or /path/to/reference.wav for voice cloning
+  model: kokoro
+  voice: af_bella # default or /path/to/reference.wav for voice cloning
 
 vad:
   enabled: true
-  sensitivity: 0.5        # 0.0 = loud speech only / 1.0 = catch everything
+  sensitivity: 0.5 # 0.0 = loud speech only / 1.0 = catch everything
 
 llm:
   provider: anthropic
