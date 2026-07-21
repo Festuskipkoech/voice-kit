@@ -19,12 +19,6 @@ framework that owns your project structure. It is a package. It goes
 where your project goes. When you deploy your project, voicekit deploys
 with it via your requirements file, exactly like every other dependency.
 
-The value it provides: the streaming voice pipeline — VAD filtering,
-Whisper transcription, LLM routing, Chatterbox synthesis, and the
-concurrent streaming cascade that makes it feel real-time — is pre-built,
-pre-tuned, and tested. A developer imports it and focuses on agent logic
-rather than infrastructure.
-
 ---
 
 ## Repository structure
@@ -40,27 +34,37 @@ voicekit/
     ├── FLOW.md                 this file
     ├── pyproject.toml
     ├── voicekit/               importable Python package
-    │   ├── __init__.py
-    │   ├── cli.py              local development CLI
-    │   ├── config.py           voice.config.yaml loading
-    │   ├── pipeline.py         streaming cascade
-    │   ├── vad.py              Silero VAD
+    │   ├── cli.py
+    │   ├── config.py
+    │   ├── pipeline.py
+    │   ├── vad.py
     │   └── providers/
-    │       ├── base.py         STTProvider, TTSProvider, LLMProvider
-    │       ├── registry.py     model registry
+    │       ├── base.py
+    │       ├── registry.py
     │       ├── stt/
     │       ├── tts/
     │       └── llm/
     ├── runtime/                Docker services for local development
     │   ├── docker-compose.yml
     │   ├── docker-compose.test.yml
-    │   ├── stt/
-    │   ├── tts/
-    │   └── gateway/
+    │   ├── stt/                Whisper STT service
+    │   ├── tts/                Chatterbox TTS service
+    │   └── gateway/            Session management, routing
+    │       ├── main.py
+    │       ├── config.py
+    │       ├── dependencies.py
+    │       ├── remote_pipeline.py
+    │       ├── routes/
+    │       │   ├── health.py
+    │       │   └── session.py
+    │       └── services/
+    │           ├── ping.py
+    │           └── session.py
     ├── tests/
     │   ├── unit/
     │   ├── pipeline/
-    │   └── integration/
+    │   ├── integration/
+    │   └── test_voice.py       end-to-end voice turn test
     ├── templates/
     │   └── voice.config.yaml
     └── docs/
@@ -76,7 +80,7 @@ voicekit/
 
 The developer imports voicekit classes directly into their project.
 Models run inside their application process. No separate services.
-No extra infrastructure. Deploys exactly like any other Python dependency.
+Deploys exactly like any other Python dependency.
 
 ```python
 from voicekit.pipeline import VoicePipeline
@@ -87,45 +91,31 @@ await pipeline.load()
 metrics = await pipeline.run_turn(audio_in, audio_out)
 ```
 
-Their Dockerfile:
-```dockerfile
-FROM python:3.11-slim
-COPY requirements.txt .
-RUN pip install -r requirements.txt   # voicekit installs here
-COPY . .
-CMD ["python", "main.py"]
-```
-
-Voicekit is just another line in requirements.txt. Nothing special about
-how it deploys.
-
 ### Mode B — Docker services (local development and advanced use)
 
-The CLI starts STT, TTS, and a gateway as separate Docker containers.
-Useful during development for testing against real models. Also useful
-for advanced deployments where developers want to scale services
-independently or share models across multiple agent projects.
+The CLI starts STT, TTS, Redis, and a gateway as separate Docker
+containers. The gateway uses `RemotePipeline` which calls STT and TTS
+over WebSocket rather than loading models locally.
 
 ```bash
-voicekit dev     # starts local Docker services
+voicekit dev     # starts all four services
 ```
 
-The Docker services expose WebSocket endpoints. The developer's project
-connects to them over the network rather than importing models directly.
-
-In production, a developer choosing Mode B includes voicekit's Docker
-Compose files in their own deployment. Their choice, their infrastructure.
-Voicekit supports both modes. Most developers start with Mode A.
+Services:
+- Redis `:6379` — session state and conversation history
+- STT `:8001` — Whisper loaded once, serves all transcription requests
+- TTS `:8002` — Chatterbox loaded once, serves all synthesis requests
+- Gateway `:8000` — lightweight routing, LLM calls, session management
 
 ---
 
-## The four architectural principles
+## The five architectural principles
 
 ### 1. The provider pattern
 
-Every STT, TTS, and LLM model implements an abstract base class defined
-in `voicekit/providers/base.py`. The pipeline only ever calls methods
-on the base class. It never imports a concrete provider.
+Every STT, TTS, and LLM model implements an abstract base class in
+`voicekit/providers/base.py`. The pipeline only ever calls methods on
+the base class.
 
 ```
 base.py defines:    STTProvider, TTSProvider, LLMProvider
@@ -134,264 +124,303 @@ pipeline.py calls:  self.stt.transcribe(), self.tts.synthesize(), self.llm.strea
 ```
 
 Adding a new model: write one class, add one line to registry, change
-one config value. Nothing else in the codebase changes.
+one config value. Nothing else changes.
 
 ### 2. The streaming cascade
 
-The core of what makes voice feel real-time. LLM tokens flow directly
-into TTS as they arrive. TTS generates audio before the LLM finishes.
-First audio plays within 600ms of the user stopping speaking.
-
 ```
 user stops speaking
-    ↓ Silero VAD has filtered silence throughout
-    ↓ Whisper transcribes — first tokens under 300ms
-    ↓ LLM starts immediately on first transcript token
-    ↓ LLM tokens → token_queue (asyncio.Queue)
+    ↓ Silero VAD filtered silence throughout
+    ↓ Whisper transcribes — tokens under 300ms
+    ↓ LLM starts on first transcript token
+    ↓ LLM tokens → token_queue
     ↓ TTS reads token_queue — buffers to sentence boundary
-    ↓ First sentence complete — TTS generates audio
-    ↓ First audio chunk arrives under 600ms total
-    ↓ (LLM still generating, more audio follows)
+    ↓ First sentence complete — TTS generates audio chunk
+    ↓ Chunk placed in audio_out queue immediately
+    ↓ Concurrent audio sender sends chunk to client
+    ↓ (LLM still generating, TTS still synthesising)
+    ↓ More chunks arrive and are sent as generated
+    ↓ All chunks sent → transcript, response, metrics sent
 ```
 
-`asyncio.gather(feed_llm(), feed_tts())` in `pipeline.py` is the key
-line. LLM generation and TTS synthesis run concurrently.
+`asyncio.gather(feed_llm(), feed_tts())` in pipeline.py runs LLM and
+TTS concurrently. `asyncio.gather(pipeline.run_turn(), send_audio_stream())`
+in session.py streams chunks to the client as they are generated.
 
-Target latency per stage:
-- Silero VAD per chunk: under 15ms
-- Whisper small (CPU): under 300ms
-- Claude Haiku first token: under 150ms
-- Chatterbox Turbo first audio: under 150ms
-- Total user-perceived: under 600ms
+### 3. Remote pipeline — gateway loads no models
 
-### 3. One process per session
+The gateway (`runtime/gateway/`) uses `RemotePipeline` not
+`VoicePipeline`. This is a critical architectural decision:
 
-Python's GIL means only one thread executes Python bytecode at a time.
-Running multiple voice sessions as threads in one process causes them
-to interfere under load — latency spikes, audio delays, unpredictable
-behaviour.
+**Why:** Loading Whisper and Chatterbox in the gateway duplicates the
+models already loaded in the STT and TTS services. On a machine with
+8GB RAM this causes OOM. Gateway startup takes 90+ seconds waiting for
+models to load. Container restart means 90 seconds of downtime.
 
-The correct pattern: one process per active voice session. Sessions
-are fully isolated. A crash or memory leak in one session cannot
-affect another. Each session's pipeline loads independently, runs
-independently, and cleans up independently.
+**How it works:** `RemotePipeline` calls STT and TTS services over
+WebSocket. The gateway is lightweight — only the LLM client loads at
+startup. Gateway restarts in seconds.
 
-In Mode A this is the developer's responsibility — they should spawn
-one process or use one async context per user session. In Mode B the
-gateway enforces this with one pipeline instance per WebSocket connection.
+```python
+# RemotePipeline in gateway — no model loading
+async def load(self) -> None:
+    # just verify services are reachable
+    async with websockets.connect(STT_WS_URL): pass
+    async with websockets.connect(TTS_WS_URL): pass
 
-### 4. Redis for session state
+# delegates transcription over WebSocket
+async def _transcribe(self, audio_in): ...
 
-Audio never touches Redis. Redis stores:
-
-```
-session:{id}       Hash    state, timestamps, turn count
-history:{id}       String  conversation history JSON, TTL 1 hour
-active_sessions    Set     all active session IDs
+# delegates synthesis over WebSocket, yields chunks as they arrive
+async def _synthesize(self, text_stream): ...
 ```
 
-Audio travels through `asyncio.Queue` between pipeline stages.
-Redis stores persistent state that survives process restarts. In Mode A
-the developer manages Redis themselves — voicekit provides the pipeline,
-they manage the session. In Mode B the gateway manages Redis.
+### 4. AUDIO_DONE sentinel for clean stream termination
+
+`run_turn()` places `AUDIO_DONE = None` into `audio_out` in its
+`finally` block when synthesis is complete. The concurrent
+`send_audio_stream()` coroutine in `session.py` reads from `audio_out`
+and stops when it receives the sentinel.
+
+This ensures:
+- All audio chunks are sent before text messages
+- Clean termination even if an exception occurs mid-synthesis
+- No race condition between audio sender and pipeline completion
+
+```python
+# in remote_pipeline.py finally block
+finally:
+    await audio_out.put(AUDIO_DONE)
+    self.turn_in_progress.clear()
+
+# in session.py send_audio_stream()
+while True:
+    chunk = await audio_out.get()
+    if chunk is AUDIO_DONE:
+        break
+    await ws.send_bytes(chunk)
+```
+
+### 5. turn_in_progress — ping never kills active synthesis
+
+The ping loop sends a ping every 30 seconds and closes dead connections
+that do not respond. But on CPU, Chatterbox synthesis takes 90-150
+seconds. Without protection, the ping would close the connection
+mid-synthesis.
+
+`turn_in_progress` is an `asyncio.Event` on `RemotePipeline`. Set at
+the start of `run_turn()`, cleared in `finally`. The ping loop checks
+this before sending a ping — if a turn is in progress it skips entirely.
+
+```python
+# in services/ping.py
+if turn_in_progress.is_set():
+    continue   # skip ping — turn in progress
+```
 
 ---
 
-## WebSocket lifecycle (Mode B)
-
-For developers using the Docker gateway, every session follows this
-state machine:
+## WebSocket lifecycle
 
 ```
-WAITING     ready for audio, ping loop running
+WAITING     ready for audio, ping loop running (skips if turn active)
     ↓ audio arrives
-RECEIVING   collecting chunks through VAD
+RECEIVING   collecting chunks
     ↓ end_of_speech signal
-PROCESSING  pipeline running (30s timeout)
-    ↓ pipeline completes
-STREAMING   sending audio chunks to client
-    ↓ audio queue empty
+PROCESSING  pipeline running
+    ↓ (concurrently) audio chunks streaming to client
+STREAMING   send_audio_stream() sending chunks as they arrive
+    ↓ AUDIO_DONE sentinel received
+TEXT        transcript, response, metrics sent
+    ↓
 WAITING     ready for next turn
     ↓ any exit condition
 CLOSED      finally block runs, Redis cleanup
 ```
 
 Three independent timers:
-
-**Ping/pong (30s interval, 10s timeout)**
-Server sends ping every 30 seconds. Client responds with pong. No pong
-within 10 seconds — connection is dead, close it. This distinguishes
-idle-but-alive sessions from dead connections without incorrectly
-closing sessions where the user is just thinking.
-
-**Idle timeout (30 minutes)**
-No completed turn in 30 minutes — session is abandoned. Close cleanly.
-
-**Turn timeout (30 seconds)**
-Pipeline must complete within 30 seconds of receiving end_of_speech.
-If it hangs, cancel the pipeline and reset to WAITING for the next
-turn — do not close the session.
-
-Cleanup is guaranteed by a `finally` block that always runs regardless
-of how the session exits.
+- **Ping/pong** (30s interval, 10s timeout) — skipped during active turns
+- **Idle timeout** (30 minutes) — closes abandoned sessions
+- **Turn timeout** (5 minutes) — cancels hung pipeline turns
 
 ---
 
-## Audio format contract
+## Audio format
 
-**Into the pipeline (from any transport):**
+**Client → Gateway (input):**
 - Format: raw PCM, no WAV header
-- Sample rate: 16000 Hz
-- Channels: 1 (mono)
-- Dtype: float32, values in [-1.0, 1.0]
-- Chunk size: 1600 samples = 100ms per chunk
+- Sample rate: 16000 Hz, mono, float32, values in [-1.0, 1.0]
+- Chunk size: 1600 samples = 100ms
 
-**Out of the pipeline (to any transport):**
-- Format: WAV with header
-- Sample rate: 24000 Hz
-- Channels: 1 (mono)
-- Bit depth: 16-bit signed integer
+**Gateway → Client (output):**
+- Chunk 1: complete WAV file (44-byte header + float32 PCM data)
+- Chunks 2..N: raw float32 PCM bytes, no header
+- Sample rate: 24000 Hz, mono
+- Client must handle both formats — read chunk 1 with soundfile,
+  read chunks 2..N as `np.frombuffer(chunk, dtype=np.float32)`
 
-Different sample rates are intentional — Whisper expects 16kHz,
-Chatterbox Turbo outputs 24kHz. Standard for voice pipelines.
+---
+
+## Known issues and workarounds
+
+### Chatterbox perth watermarker
+
+`chatterbox-tts` depends on `perth` for audio watermarking. The
+`PerthImplicitWatermarker` C extension fails to load with uv due to
+missing `pkg_resources`. Fix applied in `ChatterboxTTS.load()`:
+
+```python
+import perth
+
+class DummyWatermarker:
+    def __init__(self, *args, **kwargs): pass
+    def apply_watermark(self, wav, *args, **kwargs): return wav
+    def __call__(self, *args, **kwargs): return args[0] if args else None
+
+perth.PerthImplicitWatermarker = DummyWatermarker
+perth.DummyWatermarker = DummyWatermarker
+
+from chatterbox.tts_turbo import ChatterboxTurboTTS
+```
+
+Audio synthesis works correctly — the watermark is simply not embedded.
+
+### Silero VAD window size
+
+Silero requires exactly 512 samples per inference call. Audio arrives
+in 1600-sample chunks. Implementation splits each chunk into 512-sample
+windows and feeds them sequentially — state accumulates across windows
+within a chunk, which is the correct streaming behaviour.
+
+`reset_states()` is called after each complete utterance, not between
+windows within a chunk. Calling it between windows destroys the context
+the RNN needs for accurate detection.
+
+### Chatterbox on CPU latency
+
+Chatterbox Turbo on CPU takes 90-150 seconds for a typical response.
+On GPU this drops to 2-5 seconds. The `turn_in_progress` flag and
+5-minute turn timeout accommodate CPU inference. For production
+deployment, a GPU is strongly recommended.
 
 ---
 
 ## Phase status
 
-| Phase | Description | Status |
-|---|---|---|
-| Prototype | Architecture validation, simulated models, full test suite | COMPLETE |
-| Phase 1 | Real models, Silero VAD, Redis, production WebSocket | IN PROGRESS |
-| Phase 2 | Kokoro TTS, OpenAI LLM, observability groundwork | NOT STARTED |
-| Phase 3 | Prometheus metrics, Grafana dashboard | NOT STARTED |
-| Phase 4 | CI, example projects, PyPI publish | NOT STARTED |
+| Phase | Description | Status | Branch |
+|---|---|---|---|
+| Prototype | Architecture validation, simulated models | COMPLETE | main |
+| Phase 1 | Real models, Redis, production WebSocket | COMPLETE | phase-1 → main |
+| Phase 2 | Kokoro TTS, OpenAI LLM, observability | IN PROGRESS | - |
+| Phase 3 | Prometheus metrics, Grafana dashboard | NOT STARTED | - |
+| Phase 4 | CI, example projects, PyPI publish | NOT STARTED | - |
 
 ---
 
-## Prototype — COMPLETE
+## Phase 1 — COMPLETE
 
-See `prototype/PROTOTYPE.md` for full detail.
+See `docs/phase-1.md` for full implementation guide.
 
-Proved: provider pattern, streaming cascade, session isolation, CLI,
-WebSocket protocol, 27/29 tests passing (2 skipped in simulation mode
-by design).
+**What was built:**
+- `WhisperSTT` — faster-whisper, CPU int8, lazy generator fix
+- `ChatterboxTTS` — Chatterbox Turbo, sentence buffering, perth patch
+- `ClaudeProvider` — Anthropic SDK, executor+queue streaming pattern
+- `VADProcessor` — Silero VAD, 512-sample windows, reset_states pattern
+- Redis — session state, conversation history TTL 1hr
+- `RemotePipeline` — gateway calls STT/TTS over WebSocket
+- `AUDIO_DONE` sentinel — clean audio stream termination
+- `turn_in_progress` flag — ping never kills active synthesis
+- Concurrent audio sender — true end-to-end streaming
+- Production gateway — structured JSON logging, three timers
 
----
-
-## Phase 1 — IN PROGRESS
-
-See `docs/phase-1.md` for complete implementation guide.
-
-Replaces simulated providers with real models. Adds Silero VAD, Redis,
-and production WebSocket gateway with proper connection lifecycle.
-
-Complete when all 29 integration tests pass including the two previously
-skipped, and a real voice turn works end to end.
-
----
-
-## Phase 2 — NOT STARTED
-
-See `docs/phase-2.md` for complete implementation guide.
-
-Adds Kokoro TTS as a second TTS option and OpenAI as a second LLM
-provider — proving swappability is real. Adds observability groundwork
-for Phase 3.
+**Test results:**
+```
+Unit tests:        20/20 passing
+Pipeline tests:     9/9  passing
+Integration tests: 29/29 passing
+End-to-end:        voice in → WAV out, confirmed working
+```
 
 ---
 
-## Phase 3 — NOT STARTED
+## Phase 2 — IN PROGRESS
 
-Prometheus metrics and Grafana dashboard. Every turn already captures
-`PipelineMetrics`. This phase exposes those as Prometheus metrics and
-builds a dashboard showing per-stage latency, active sessions, error
-rates, and memory usage.
+See `docs/phase-2.md` for implementation guide.
 
----
-
-## Phase 4 — NOT STARTED
-
-Open source release:
-- GitHub Actions CI on every push
-- Example projects — web agent, FreeSWITCH integration
-- Load test results documented with hardware spec
-- CONTRIBUTING.md explaining the provider pattern
-- PyPI publish — `pip install voicekit` works from anywhere
+Kokoro TTS, OpenAI LLM provider, observability groundwork.
 
 ---
 
 ## Key decisions and why
 
-**Package not platform.**
-Voicekit installs like LangChain and deploys like LangChain. Developers
-do not run a separate voicekit server. They import classes. Their
-deployment handles voicekit exactly like every other dependency.
+**Remote pipeline pattern.**
+Gateway loads no models. STT and TTS services each load their model
+once and serve all requests. Gateway delegates over WebSocket. This
+keeps gateway lightweight, fast-starting, and memory-efficient.
 
-**Silero VAD from day one.**
-Energy-based VAD fails in real environments — noise, quiet speakers,
-accents. Silero is a 1.8MB neural model, 12ms per chunk on CPU, accurate
-across all conditions. No reason to ship the inferior version first.
+**AUDIO_DONE sentinel over queue.empty() drain.**
+A simple `while not audio_out.empty(): send()` drain runs after
+`run_turn()` completes — too late for true streaming. The sentinel
+allows `send_audio_stream()` to run concurrently and terminate cleanly.
 
-**Redis from day one.**
-In-process session state cannot survive restarts. Redis adds one
-dependency and a few lines of code. The benefit is immediate.
-
-**Chatterbox Turbo over ElevenLabs.**
-Zero per-call cost, voice cloning, 75ms first audio, MIT license.
-
-**Whisper over Deepgram.**
-Zero per-minute cost after setup. Deepgram costs $0.0043 per minute —
-significant at scale.
+**turn_in_progress over increased ping interval.**
+Increasing `PING_INTERVAL` to 120+ seconds to accommodate CPU
+inference is a hack. The ping interval should reflect network
+health checking needs (30 seconds), not model inference speed.
+The flag decouples these concerns correctly.
 
 **Sentence boundary buffering in TTS.**
-One word at a time produces flat robotic delivery — no sentence context
-for intonation. Full response before TTS kills latency. Sentence
-boundaries are the right compromise — natural prosody, audio starts
-within one sentence of the LLM beginning to respond.
+One token at a time produces flat robotic delivery — no sentence
+context for intonation. Full response before TTS kills latency.
+Sentence boundaries give natural prosody with low latency.
 
-**One process per session.**
-GIL prevents safe concurrent audio pipelines in one process. One process
-per session eliminates an entire class of concurrency bugs.
-
-**Docker Compose not Kubernetes.**
-Local development tooling does not need Kubernetes. A single VPS handles
-20+ concurrent sessions. When a project genuinely needs multi-machine
-orchestration, that is the developer's decision to make for their
-project, not voicekit's.
+**Package not platform.**
+Voicekit installs like LangChain. Developers import classes. Their
+deployment handles voicekit like every other dependency. No separate
+voicekit server for the primary usage mode.
 
 **No deploy command.**
-Voicekit is a package. Packages do not deploy themselves. The developer's
-own deployment process — Dockerfile, docker-compose, whatever they use
-— installs voicekit as a dependency. No special handling needed.
+Voicekit is a package. Packages do not deploy themselves.
 
 ---
 
 ## Environment variables
 
 ```
-ANTHROPIC_API_KEY     set when using anthropic LLM provider
-OPENAI_API_KEY        set when using openai LLM provider
+VOICEKIT_STT_MODEL       stt service     STT model identifier
+VOICEKIT_STT_VARIANT     stt service     model size or variant
+VOICEKIT_TTS_MODEL       tts service     TTS model identifier
+VOICEKIT_TTS_VOICE       tts service     voice profile
+VOICEKIT_LLM_PROVIDER    gateway         LLM provider identifier
+VOICEKIT_LLM_MODEL       gateway         model name
+VOICEKIT_LLM_API_KEY     gateway         routed to ANTHROPIC_API_KEY or OPENAI_API_KEY
+VOICEKIT_VAD_ENABLED     gateway         whether VAD filters silence
+VOICEKIT_VAD_SENSITIVITY gateway         VAD threshold 0.0-1.0
+VOICEKIT_SYSTEM_PROMPT   gateway         LLM system prompt
+REDIS_HOST               gateway         Redis hostname (default: redis)
+REDIS_PORT               gateway         Redis port (default: 6379)
+STT_WS_URL               gateway         STT WebSocket URL (default: ws://stt:8001/stt)
+TTS_WS_URL               gateway         TTS WebSocket URL (default: ws://tts:8002/tts)
 ```
 
-Config resolves `${VAR_NAME}` from shell environment:
-
-```yaml
-llm:
-  api_key: ${ANTHROPIC_API_KEY}
-```
-
-In Docker, pass via environment section in docker-compose.yml or
-via `-e` flag. Standard Python package behaviour.
+API keys go in `runtime/.env` for Docker services. Never commit this
+file. It is in `.gitignore`.
 
 ---
 
 ## Running tests
 
 ```bash
+# unit and pipeline — no Docker needed
 uv run pytest tests/unit/ tests/pipeline/ -v
 
+# integration — requires Docker test stack
 docker compose -f runtime/docker-compose.test.yml up -d
 uv run pytest tests/integration/ -v
 docker compose -f runtime/docker-compose.test.yml down
+
+# end-to-end voice test — requires full stack running
+docker compose -f runtime/docker-compose.yml up -d
+uv run python tests/test_voice.py
+aplay tests/results/response.wav
 ```

@@ -49,10 +49,11 @@ class ClaudeProvider(LLMProvider):
         def _stream_sync() -> None:
             try:
                 with self.client.messages.stream(
-                    model = self.model,
-                    max_tokens = max_tokens,
+                    model=self.model,
+                    max_tokens=300,
+                    temperature=0.3,
                     system=system,
-                    messages=messages
+                    messages=messages,
                 ) as stream:
                     for token in stream.text_stream:
                         loop.call_soon_threadsafe(queue.put_nowait, token)

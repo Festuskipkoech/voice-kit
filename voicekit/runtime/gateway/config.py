@@ -24,9 +24,12 @@ def config_from_env() -> VoiceConfig:
         ),
         system_prompt=os.environ.get(
             "VOICEKIT_SYSTEM_PROMPT",
-            "You are a helpful voice assistant. "
-            "Keep responses concise and natural. "
-            "Never use markdown — you are speaking out loud.",
+            "You are a voice assistant. Your responses are converted to speech "
+            "and played as audio. The user cannot see text. Use plain spoken "
+            "English only. No emojis, no asterisks, no markdown, no bullet "
+            "points, no lists, no headers. Speak in short natural sentences "
+            "as if talking to someone on a phone call. Maximum 2 to 3 sentences "
+            "per response. Never use filler phrases."
         ),
     )
 

@@ -66,7 +66,7 @@ async def test():
             print("Generate with:")
             print("  mkdir -p tests/fixtures")
             print("  python -c \"from gtts import gTTS; import subprocess; "
-                  "tts = gTTS('hello how are you doing today', lang='en'); "
+                  "tts = gTTS('hello decsribe, ai', lang='en'); "
                   "tts.save('/tmp/speech.mp3'); "
                   "subprocess.run(['ffmpeg', '-i', '/tmp/speech.mp3', "
                   "'-ar', '16000', '-ac', '1', '-f', 'f32le', "
