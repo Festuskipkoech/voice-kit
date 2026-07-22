@@ -1,13 +1,12 @@
 import os
 from voicekit.config import VoiceConfig, STTConfig, TTSConfig, VADConfig, LLMConfig
 
-
 def config_from_env() -> VoiceConfig:
     return VoiceConfig(
         project=os.environ.get("VOICEKIT_PROJECT", "voicekit"),
         stt=STTConfig(
             model=os.environ.get("VOICEKIT_STT_MODEL", "whisper"),
-            variant=os.environ.get("VOICEKIT_STT_VARIANT", "small"),
+            variant=os.environ.get("VOICEKIT_STT_VARIANT", "tiny"),
         ),
         tts=TTSConfig(
             model=os.environ.get("VOICEKIT_TTS_MODEL", "chatterbox-turbo"),
@@ -24,15 +23,15 @@ def config_from_env() -> VoiceConfig:
         ),
         system_prompt=os.environ.get(
             "VOICEKIT_SYSTEM_PROMPT",
-            "You are a voice assistant. Your responses are converted to speech "
-            "and played as audio. The user cannot see text. Use plain spoken "
-            "English only. No emojis, no asterisks, no markdown, no bullet "
-            "points, no lists, no headers. Speak in short natural sentences "
-            "as if talking to someone on a phone call. Maximum 2 to 3 sentences "
-            "per response. Never use filler phrases."
+            "You are a voice assistant. Everything you say is immediately "
+            "converted to speech and played as audio. The user cannot see text. "
+            "Start every response with a natural filler word followed by a comma, "
+            "like 'Sure,' or 'Well,' or 'Right,' — this must be the very first word. "
+            "Then speak in plain sentences. No emojis, no asterisks, no markdown, "
+            "no bullet points, no lists, no headers. Maximum 2 sentences after the filler word. "
+            "Never repeat yourself."
         ),
     )
-
 
 def configure_llm_key(config: VoiceConfig) -> None:
     key = config.llm.api_key

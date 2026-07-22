@@ -29,6 +29,7 @@ import logging
 import os
 import time
 from typing import AsyncIterator
+from voicekit.utils.text_cleaner import clean_for_tts
 
 import websockets
 
@@ -156,7 +157,7 @@ class RemotePipeline:
             # phase 2+3 — LLM streaming into TTS concurrently
             # audio chunks flow into audio_out as TTS generates them
             # session.py is draining audio_out simultaneously
-            llm_token_queue: asyncio.Queue[str | None] = asyncio.Queue()
+            llm_token_queue: asyncio.Queue[str | None] = asyncio.Queue(maxsize=1)
             full_response_parts: list[str] = []
             llm_start = time.perf_counter()
             first_token_ref: list[float] = []
@@ -169,8 +170,11 @@ class RemotePipeline:
                 ):
                     if not first_token_ref:
                         first_token_ref.append(time.perf_counter())
-                    full_response_parts.append(token)
-                    await llm_token_queue.put(token)
+                    clean_token = clean_for_tts(token)
+                    if clean_token:
+                        full_response_parts.append(clean_token)
+                        await llm_token_queue.put(clean_token)
+                        await asyncio.sleep(0)   # yield to event loop — lets feed_tts consume and flush
                 await llm_token_queue.put(None)
 
             async def token_stream() -> AsyncIterator[str]:

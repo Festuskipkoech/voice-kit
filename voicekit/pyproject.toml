@@ -31,9 +31,7 @@ chatterbox = [
     "setuptools",
 ]
 kokoro = [
-    "kokoro>=0.9.4",
-    # espeak-ng must be installed as a system package:
-    # apt-get install -y espeak-ng
+    "kokoro-onnx>=0.5.0",
 ]
 dev = [
     "pytest",
@@ -55,3 +53,8 @@ packages = ["voicekit"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+
+[tool.uv]
+conflicts = [
+    [{ extra = "kokoro" }, { extra = "chatterbox" }],
+]

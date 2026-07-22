@@ -5,39 +5,83 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>voicekit — voice test</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
 
+  <!-- Film grain overlay for tactile texture -->
+  <div class="grain-overlay" aria-hidden="true"></div>
+
   <header class="header">
-    <span class="header-logo">voicekit</span>
-    <span class="header-meta">ws://localhost:8000/session</span>
-    <span id="status-badge" class="status-badge status-disconnected">disconnected</span>
+    <div class="header-brand">
+      <span class="header-logo">voicekit</span>
+      <span class="header-version">v2.4</span>
+    </div>
+    <div class="header-center">
+      <span class="endpoint-pill">
+        <span class="endpoint-dot" id="endpoint-dot"></span>
+        ws://localhost:8000/session
+      </span>
+    </div>
+    <div class="header-status">
+      <span id="status-badge" class="status-badge status-disconnected">
+        <span class="status-pulse"></span>
+        disconnected
+      </span>
+    </div>
   </header>
 
   <main class="layout">
 
     <section class="panel panel-voice">
 
-      <div class="oscilloscope-ring" id="osc-ring">
-        <canvas id="osc-canvas" width="220" height="220"></canvas>
-        <button id="record-btn" class="record-btn" aria-label="Hold to speak" disabled>
-          <span class="record-icon"></span>
-          <span class="record-label" id="record-label">connecting</span>
-        </button>
+      <div class="oscilloscope-container">
+        <div class="oscilloscope-ring" id="osc-ring">
+          <canvas id="osc-canvas" width="280" height="280"></canvas>
+          <div class="osc-glow" id="osc-glow"></div>
+          <button id="record-btn" class="record-btn" aria-label="Hold to speak" disabled>
+            <div class="record-btn-inner">
+              <span class="record-icon" id="record-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/>
+                  <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+                  <line x1="12" y1="19" x2="12" y2="22"/>
+                </svg>
+              </span>
+              <span class="record-label" id="record-label">connecting</span>
+              <span class="record-sublabel" id="record-sublabel">hold to speak</span>
+            </div>
+          </button>
+        </div>
+        <div class="oscilloscope-reflection" aria-hidden="true"></div>
       </div>
 
-      <div class="hint" id="hint-text">waiting for connection</div>
+      <div class="hint-container">
+        <div class="hint-line" id="hint-line"></div>
+        <div class="hint" id="hint-text">waiting for connection</div>
+      </div>
 
       <div class="transcript-block" id="transcript-block" aria-live="polite">
+        <div class="transcript-header">
+          <span class="transcript-live-indicator" id="live-indicator">
+            <span class="live-dot"></span>
+            LIVE
+          </span>
+          <span class="transcript-timestamp" id="transcript-timestamp">--:--:--</span>
+        </div>
         <div class="transcript-row" id="user-row">
           <span class="transcript-tag">you</span>
-          <span class="transcript-text" id="user-text">—</span>
+          <span class="transcript-text" id="user-text">
+            <span class="transcript-placeholder">—</span>
+          </span>
         </div>
+        <div class="transcript-divider"></div>
         <div class="transcript-row" id="agent-row">
           <span class="transcript-tag">agent</span>
-          <span class="transcript-text" id="agent-text">—</span>
+          <span class="transcript-text" id="agent-text">
+            <span class="transcript-placeholder">—</span>
+          </span>
         </div>
       </div>
 
@@ -45,98 +89,143 @@
 
     <section class="panel panel-metrics">
 
-      <div class="metrics-header">
-        <span class="metrics-title">latency</span>
-        <span class="metrics-subtitle" id="total-label">—</span>
+      <div class="metrics-hero">
+        <div class="metrics-hero-label">performance</div>
+        <div class="metrics-hero-value" id="total-label">—</div>
+        <div class="metrics-hero-unit">ms round-trip</div>
       </div>
 
       <div class="metrics-bars" id="metrics-bars">
 
-        <div class="metric-row">
-          <span class="metric-label">stt</span>
-          <div class="metric-track">
-            <div class="metric-bar" id="bar-stt" style="width:0%"></div>
+        <div class="metric-group">
+          <div class="metric-group-label">server pipeline</div>
+          
+          <div class="metric-row">
+            <span class="metric-label">speech-to-text</span>
+            <div class="metric-track">
+              <div class="metric-bar" id="bar-stt" style="width:0%"></div>
+              <div class="metric-bar-bg"></div>
+            </div>
+            <span class="metric-value" id="val-stt">—</span>
           </div>
-          <span class="metric-value" id="val-stt">—</span>
-        </div>
 
-        <div class="metric-row">
-          <span class="metric-label">llm first token</span>
-          <div class="metric-track">
-            <div class="metric-bar" id="bar-llm" style="width:0%"></div>
+          <div class="metric-row">
+            <span class="metric-label">llm first token</span>
+            <div class="metric-track">
+              <div class="metric-bar" id="bar-llm" style="width:0%"></div>
+              <div class="metric-bar-bg"></div>
+            </div>
+            <span class="metric-value" id="val-llm">—</span>
           </div>
-          <span class="metric-value" id="val-llm">—</span>
-        </div>
 
-        <div class="metric-row">
-          <span class="metric-label">tts first chunk</span>
-          <div class="metric-track">
-            <div class="metric-bar" id="bar-tts" style="width:0%"></div>
+          <div class="metric-row">
+            <span class="metric-label">tts first chunk</span>
+            <div class="metric-track">
+              <div class="metric-bar" id="bar-tts" style="width:0%"></div>
+              <div class="metric-bar-bg"></div>
+            </div>
+            <span class="metric-value" id="val-tts">—</span>
           </div>
-          <span class="metric-value" id="val-tts">—</span>
-        </div>
 
-        <div class="metric-row metric-row-total">
-          <span class="metric-label">server total</span>
-          <div class="metric-track">
-            <div class="metric-bar metric-bar-total" id="bar-total" style="width:0%"></div>
+          <div class="metric-row metric-row-total">
+            <span class="metric-label">server total</span>
+            <div class="metric-track">
+              <div class="metric-bar metric-bar-total" id="bar-total" style="width:0%"></div>
+              <div class="metric-bar-bg"></div>
+            </div>
+            <span class="metric-value" id="val-total">—</span>
           </div>
-          <span class="metric-value" id="val-total">—</span>
         </div>
 
         <div class="metrics-divider"></div>
 
-        <div class="metric-row metric-row-client">
-          <span class="metric-label">first audio (client)</span>
-          <div class="metric-track">
-            <div class="metric-bar metric-bar-client" id="bar-first-audio" style="width:0%"></div>
-          </div>
-          <span class="metric-value" id="val-first-audio">—</span>
-        </div>
+        <div class="metric-group">
+          <div class="metric-group-label">client telemetry</div>
 
-        <div class="metric-row metric-row-client">
-          <span class="metric-label">transcript (client)</span>
-          <div class="metric-track">
-            <div class="metric-bar metric-bar-client" id="bar-transcript" style="width:0%"></div>
+          <div class="metric-row metric-row-client">
+            <span class="metric-label">first audio</span>
+            <div class="metric-track">
+              <div class="metric-bar metric-bar-client" id="bar-first-audio" style="width:0%"></div>
+              <div class="metric-bar-bg"></div>
+            </div>
+            <span class="metric-value" id="val-first-audio">—</span>
           </div>
-          <span class="metric-value" id="val-transcript-latency">—</span>
-        </div>
 
-        <div class="metric-row metric-row-client">
-          <span class="metric-label">round-trip (client)</span>
-          <div class="metric-track">
-            <div class="metric-bar metric-bar-client" id="bar-roundtrip" style="width:0%"></div>
+          <div class="metric-row metric-row-client">
+            <span class="metric-label">transcript</span>
+            <div class="metric-track">
+              <div class="metric-bar metric-bar-client" id="bar-transcript" style="width:0%"></div>
+              <div class="metric-bar-bg"></div>
+            </div>
+            <span class="metric-value" id="val-transcript-latency">—</span>
           </div>
-          <span class="metric-value" id="val-roundtrip">—</span>
-        </div>
 
-        <div class="metric-row metric-row-client">
-          <span class="metric-label">network overhead</span>
-          <div class="metric-track">
-            <div class="metric-bar metric-bar-network" id="bar-network" style="width:0%"></div>
+          <div class="metric-row metric-row-client">
+            <span class="metric-label">round-trip</span>
+            <div class="metric-track">
+              <div class="metric-bar metric-bar-client" id="bar-roundtrip" style="width:0%"></div>
+              <div class="metric-bar-bg"></div>
+            </div>
+            <span class="metric-value" id="val-roundtrip">—</span>
           </div>
-          <span class="metric-value" id="val-network">—</span>
+
+          <div class="metric-row metric-row-client">
+            <span class="metric-label">network overhead</span>
+            <div class="metric-track">
+              <div class="metric-bar metric-bar-network" id="bar-network" style="width:0%"></div>
+              <div class="metric-bar-bg"></div>
+            </div>
+            <span class="metric-value" id="val-network">—</span>
+          </div>
         </div>
 
       </div>
 
       <div class="metrics-legend">
-        <span class="legend-dot legend-server"></span><span>server-reported</span>
-        <span class="legend-dot legend-client"></span><span>client-measured</span>
-        <span class="legend-dot legend-network"></span><span>network delta</span>
+        <div class="legend-item">
+          <span class="legend-dot legend-server"></span>
+          <span class="legend-label">server-reported</span>
+        </div>
+        <div class="legend-item">
+          <span class="legend-dot legend-client"></span>
+          <span class="legend-label">client-measured</span>
+        </div>
+        <div class="legend-item">
+          <span class="legend-dot legend-network"></span>
+          <span class="legend-label">network delta</span>
+        </div>
       </div>
 
       <div class="session-meta" id="session-meta">
-        <span>session <span id="session-id">—</span></span>
-        <span>turns <span id="turn-count">0</span></span>
-        <span>chunks <span id="chunk-count">0</span></span>
+        <div class="session-item">
+          <span class="session-label">session</span>
+          <span class="session-value" id="session-id">—</span>
+        </div>
+        <div class="session-divider"></div>
+        <div class="session-item">
+          <span class="session-label">turns</span>
+          <span class="session-value" id="turn-count">0</span>
+        </div>
+        <div class="session-divider"></div>
+        <div class="session-item">
+          <span class="session-label">chunks</span>
+          <span class="session-value" id="chunk-count">0</span>
+        </div>
       </div>
 
     </section>
 
   </main>
 
-  <div class="error-bar" id="error-bar" aria-live="assertive"></div>
+  <div class="error-bar" id="error-bar" aria-live="assertive">
+    <div class="error-bar-content">
+      <span class="error-bar-icon">!</span>
+      <span class="error-bar-text" id="error-bar-text"></span>
+    </div>
+  </div>
+
+  <!-- Ambient background glow -->
+  <div class="ambient-glow" aria-hidden="true"></div>
 
   <script src="app.js"></script>
 </body>
