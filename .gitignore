@@ -9,3 +9,4 @@ tests/results/
 voicekit/.venv/
 voicekit/.env
 voicekit/runtime/.env
+voicekit/models/
