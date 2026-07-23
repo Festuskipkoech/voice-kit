@@ -32,12 +32,14 @@ chatterbox = [
 ]
 kokoro = [
     "kokoro-onnx>=0.5.0",
+    "misaki[en]",
 ]
 dev = [
     "pytest",
     "pytest-asyncio",
     "anyio",
     "gtts",
+    "httpx",
 ]
 
 [project.scripts]

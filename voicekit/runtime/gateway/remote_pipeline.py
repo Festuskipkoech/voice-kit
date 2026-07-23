@@ -1,27 +1,41 @@
 """
 Remote Pipeline
 
-The gateway's pipeline implementation that calls STT and TTS
-services over WebSocket rather than loading models locally.
+The gateway's pipeline implementation. Calls STT and TTS services over
+WebSocket rather than loading models locally. The gateway stays lightweight,
+fast-starting, and memory-efficient — models load once in their dedicated
+services.
 
-True end-to-end streaming:
-    TTS generates chunk → immediately placed in audio_out queue
-    session.py drains audio_out concurrently while pipeline runs
-    Client receives audio chunks as they are generated
-    Transcript, response, metrics arrive after all audio is sent
+Streaming architecture:
+    Phase 1 — STT
+        Audio chunks from client - WebSocket - Whisper service - transcript
+    Phase 2 — LLM + Splitter (concurrent)
+        LLM streams tokens - PhraseStream detects <|BREAK|> markers
+        - clean complete phrases queued into phrase_queue
+    Phase 3 — TTS (concurrent with Phase 2)
+        synthesise_phrases() pulls one phrase at a time from phrase_queue
+        - WebSocket - SS service - audio chunks - audio_out queue
+    Phase 4 — Audio sender (concurrent with Phases 2+3, lives in session.py)
+        audio_out queue drained by send_audio_stream() in session.py
+        - WebSocket - client receives audio while LLM still generating
 
-    This means the client starts playing audio while TTS is still
-    generating — exactly like a real phone call.
+Rate adaptation via bounded queue:
+    phrase_queue has maxsize=2. When STT is busy synthesising, the queue
+    fills and split_tokens() blocks naturally on put(). LLM tokens accumulate
+    in PhraseStream's internal buffer until STT finishes and pulls the next
+    phrase. The entire pipeline breathes at exactly the rate STT can consume.
+    No timers, no polling, no measurement needed.
 
-Architecture:
-    Gateway (no models, lightweight)
-        WebSocket
-    STT service (Whisper loaded here)
-        transcript
-    LLM API (Claude/OpenAI)
-        tokens stream
-    TTS service (Chatterbox loaded here)
-        audio chunks stream → audio_out queue → client
+Clean termination:
+    AUDIO_DONE sentinel placed in audio_out in the finally block — always runs
+    even if an exception occurs mid-synthesis. send_audio_stream() in session.py
+    stops on the sentinel. No race condition, no hanging consumers.
+
+Ping protection:
+    turn_in_progress asyncio.Event set at start of run_turn(), cleared in
+    finally. Ping loop in services/ping.py skips entirely during active turns.
+    STT on CPU can take 5-10 seconds per phrase — the ping must never close
+    a connection mid-synthesis.
 """
 import asyncio
 import json
@@ -29,29 +43,28 @@ import logging
 import os
 import time
 from typing import AsyncIterator
-from voicekit.utils.text_cleaner import clean_for_tts
 
 import websockets
+
+from voicekit.utils.phrase_splitter import PhraseStream
 
 log = logging.getLogger(__name__)
 
 STT_WS_URL = os.environ.get("STT_WS_URL", "ws://stt:8001/stt")
 TTS_WS_URL = os.environ.get("TTS_WS_URL", "ws://tts:8002/tts")
 
-# sentinel value placed in audio_out when pipeline is done
-# signals the concurrent audio sender in session.py to stop
 AUDIO_DONE = None
 
 class PipelineMetrics:
     def __init__(self):
-        self.stt_ms: float = 0
-        self.llm_first_token_ms: float = 0
-        self.llm_total_ms: float = 0
-        self.tts_first_chunk_ms: float = 0
-        self.tts_total_ms: float = 0
-        self.total_ms: float = 0
-        self.transcript: str = ""
-        self.response: str = ""
+        self.stt_ms              = 0.0
+        self.llm_first_token_ms  = 0.0
+        self.llm_total_ms        = 0.0
+        self.tts_first_chunk_ms  = 0.0
+        self.tts_total_ms        = 0.0
+        self.total_ms            = 0.0
+        self.transcript          = ""
+        self.response            = ""
 
     def __str__(self) -> str:
         return (
@@ -65,29 +78,21 @@ class RemotePipeline:
     """
     Voice pipeline that delegates STT and TTS to remote services.
     The gateway only handles session management, LLM calls, and routing.
-
-    True streaming: audio chunks flow into audio_out as TTS generates
-    them. session.py drains audio_out concurrently so the client
-    receives audio while synthesis is still in progress.
     """
-
     def __init__(self, config):
-        self.config = config
-        self.history: list[dict] = []
-        self._loaded = False
+        self.config          = config
+        self.history         = []
+        self._loaded         = False
         self.turn_in_progress = asyncio.Event()
-        self._llm = self._init_llm(config)
+        self._llm            = self._init_llm(config)
 
     def _init_llm(self, config):
         if config.llm.provider == "anthropic":
             from voicekit.providers.llm.claude import ClaudeProvider
             return ClaudeProvider(model=config.llm.model)
-        elif config.llm.provider == "openai":
-            from voicekit.providers.llm.openai_provider import OpenAIProvider
-            return OpenAIProvider(model=config.llm.model)
-        elif config.llm.provider == "simulated":
-            from voicekit.providers.llm.simulated import SimulatedLLM
-            return SimulatedLLM(model=config.llm.model)
+        # elif config.llm.provider == "openai":
+        #     from voicekit.providers.llm.openai_provider import OpenAIProvider
+        #     return OpenAIProvider(model=config.llm.model)
         else:
             raise ValueError(f"Unknown LLM provider: '{config.llm.provider}'")
 
@@ -99,7 +104,6 @@ class RemotePipeline:
             raise RuntimeError(
                 f"STT service not reachable at {STT_WS_URL}: {e}"
             )
-
         try:
             async with websockets.connect(TTS_WS_URL, open_timeout=5) as ws:
                 await ws.close()
@@ -109,10 +113,7 @@ class RemotePipeline:
             )
 
         self._loaded = True
-        log.info(
-            f"Remote pipeline ready — "
-            f"STT: {STT_WS_URL} TTS: {TTS_WS_URL}"
-        )
+        log.info(f"Remote pipeline ready — STT: {STT_WS_URL} TTS: {TTS_WS_URL}")
 
     async def health(self) -> dict:
         return {"stt": True, "tts": True, "loaded": self._loaded}
@@ -125,10 +126,10 @@ class RemotePipeline:
         """
         Execute one complete voice turn.
 
-        audio_in  — queue of np.ndarray chunks from client
+        audio_in  — queue of np.ndarray chunks from the client
         audio_out — queue where audio chunks are placed as TTS generates them
-                    session.py drains this concurrently while we run
-                    a None sentinel is placed when all audio is done
+                    session.py drains this concurrently
+                    AUDIO_DONE sentinel placed in finally block when complete
 
         Returns PipelineMetrics after all audio has been queued.
         """
@@ -138,14 +139,14 @@ class RemotePipeline:
             )
 
         self.turn_in_progress.set()
-        metrics = PipelineMetrics()
+        metrics    = PipelineMetrics()
         turn_start = time.perf_counter()
 
         try:
             # phase 1 — STT
-            stt_start = time.perf_counter()
-            transcript = await self._transcribe(audio_in)
-            metrics.stt_ms = (time.perf_counter() - stt_start) * 1000
+            stt_start        = time.perf_counter()
+            transcript       = await self._transcribe(audio_in)
+            metrics.stt_ms   = (time.perf_counter() - stt_start) * 1000
             metrics.transcript = transcript
 
             if not transcript.strip():
@@ -154,52 +155,83 @@ class RemotePipeline:
 
             self.history.append({"role": "user", "content": transcript})
 
-            # phase 2+3 — LLM streaming into TTS concurrently
-            # audio chunks flow into audio_out as TTS generates them
-            # session.py is draining audio_out simultaneously
-            llm_token_queue: asyncio.Queue[str | None] = asyncio.Queue(maxsize=1)
-            full_response_parts: list[str] = []
-            llm_start = time.perf_counter()
-            first_token_ref: list[float] = []
-            tts_first_chunk_ref: list[float] = []
+            # phrase_queue carries complete clean phrases from splitter to TTS
+            # maxsize=2 creates automatic backpressure:
+            #   when STT is busy, split_tokens() blocks on put()
+            #   tokens accumulate in PhraseStream's buffer until space opens
+            #   the pipeline breathes at exactly the rate STT can consume
+            phrase_queue: asyncio.Queue[str | None] = asyncio.Queue(maxsize=2)
 
-            async def feed_llm():
+            # raw token accumulation for metrics.response
+            # clean_for_tts is not called here — PhraseStream handles cleaning
+            # we strip <|BREAK|> once when assembling the final response string
+            raw_response_parts: list[str] = []
+
+            llm_start            = time.perf_counter()
+            first_token_ref:      list[float] = []
+            tts_first_chunk_ref:  list[float] = []
+
+            async def split_tokens() -> None:
+                """
+                Stream LLM tokens through PhraseStream.
+                PhraseStream detects <|BREAK|> markers, splits into phrases,
+                cleans each phrase, and yields them one at a time.
+                Each phrase is put into phrase_queue for synthesise_phrases().
+                Sends None sentinel when the LLM stream is exhausted.
+                """
+                splitter = PhraseStream()
+
                 async for token in self._llm.stream(
                     messages=self.history,
                     system=self.config.system_prompt,
                 ):
                     if not first_token_ref:
                         first_token_ref.append(time.perf_counter())
-                    clean_token = clean_for_tts(token)
-                    if clean_token:
-                        full_response_parts.append(clean_token)
-                        await llm_token_queue.put(clean_token)
-                        await asyncio.sleep(0)   # yield to event loop — lets feed_tts consume and flush
-                await llm_token_queue.put(None)
 
-            async def token_stream() -> AsyncIterator[str]:
-                while True:
-                    token = await llm_token_queue.get()
-                    if token is None:
-                        break
-                    yield token
+                    raw_response_parts.append(token)
 
-            async def feed_tts():
+                    async for phrase in splitter.feed(token):
+                        await phrase_queue.put(phrase)
+
+                # flush any remaining buffer after LLM stream ends
+                async for phrase in splitter.flush():
+                    await phrase_queue.put(phrase)
+
+                # sentinel tells synthesise_phrases() to stop
+                await phrase_queue.put(None)
+
+            async def synthesise_phrases() -> None:
+                """
+                Pull one phrase at a time from phrase_queue.
+                Send each phrase to the TTS service and put audio chunks
+                into audio_out as they arrive.
+
+                Blocking on phrase_queue.get() when the queue is empty is
+                intentional — this is where the adaptive rate happens.
+                When STT is slow, phrases queue up behind it. When fast,
+                they are consumed as fast as the LLM produces them.
+                """
                 first_chunk = True
-                async for audio_chunk in self._synthesize(token_stream()):
-                    if first_chunk:
-                        tts_first_chunk_ref.append(time.perf_counter())
-                        first_chunk = False
-                    # place chunk in queue immediately as it arrives
-                    # session.py receives and sends to client right away
-                    await audio_out.put(audio_chunk)
 
-            # LLM and TTS run concurrently
-            # audio chunks flow to client while LLM is still generating
-            await asyncio.gather(feed_llm(), feed_tts())
+                while True:
+                    phrase = await phrase_queue.get()
+                    if phrase is None:
+                        break
 
-            full_response = "".join(full_response_parts)
-            metrics.response = full_response
+                    async for audio_chunk in self._synthesize(phrase):
+                        if first_chunk:
+                            tts_first_chunk_ref.append(time.perf_counter())
+                            first_chunk = False
+                        await audio_out.put(audio_chunk)
+
+            # LLM+splitter and TTS run concurrently
+            # audio chunks flow into audio_out while the LLM is still generating
+            await asyncio.gather(split_tokens(), synthesise_phrases())
+
+            # assemble clean response for metrics — strip markers from raw parts
+            raw_response      = "".join(raw_response_parts)
+            metrics.response  = raw_response.replace("<|BREAK|>", "").strip()
+
             metrics.llm_first_token_ms = (
                 (first_token_ref[0] - llm_start) * 1000
                 if first_token_ref else 0
@@ -211,12 +243,12 @@ class RemotePipeline:
             )
             metrics.total_ms = (time.perf_counter() - turn_start) * 1000
 
-            self.history.append({"role": "assistant", "content": full_response})
+            self.history.append({"role": "assistant", "content": metrics.response})
             return metrics
 
         finally:
             # always place sentinel — tells session.py audio is done
-            # this runs even if an exception occurred
+            # runs even if an exception occurred mid-synthesis
             await audio_out.put(AUDIO_DONE)
             self.turn_in_progress.clear()
 
@@ -246,30 +278,21 @@ class RemotePipeline:
 
         return transcript
 
-    async def _synthesize(
-        self,
-        text_stream: AsyncIterator[str]
-    ) -> AsyncIterator[bytes]:
+    async def _synthesize(self, phrase: str) -> AsyncIterator[bytes]:
         """
-        Stream text tokens to TTS service.
-        Yield audio chunks immediately as TTS generates them.
-        True streaming — no buffering.
+        Send a single clean phrase to the TTS service over WebSocket.
+        Yield audio chunks as they arrive.
+
+        The phrase is already clean — PhraseStream stripped markers and
+        markdown before putting it into phrase_queue.
         """
         async with websockets.connect(
             TTS_WS_URL,
             ping_interval=None,
             ping_timeout=None,
         ) as ws:
-
-            async def send_tokens():
-                async for token in text_stream:
-                    await ws.send(json.dumps({
-                        "type": "token",
-                        "text": token,
-                    }))
-                await ws.send(json.dumps({"type": "end"}))
-
-            send_task = asyncio.create_task(send_tokens())
+            await ws.send(json.dumps({"type": "phrase", "text": phrase}))
+            await ws.send(json.dumps({"type": "end"}))
 
             async for message in ws:
                 if isinstance(message, bytes):
@@ -281,5 +304,3 @@ class RemotePipeline:
                     elif data["type"] == "error":
                         log.error(f"TTS error: {data['message']}")
                         break
-
-            await send_task

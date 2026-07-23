@@ -1,35 +1,65 @@
+"""
+KokoroTTS — Kokoro ONNX text-to-speech provider.
+
+Two-stage synthesis:
+    1. misaki G2P converts the phrase to phonemes (synchronous, milliseconds)
+    2. kokoro-onnx create_stream() synthesises audio from phonemes
+
+Why misaki g2p:
+    Kokoro is trained on phoneme sequences, not raw text. Without explicit
+    phonemisation, Kokoro does its own internal text-to-phoneme guess which
+    stumbles on abbreviations, numbers, proper nouns, and anything unusual.
+    misaki handles all standard English correctly. The espeak fallback handles
+    out-of-vocabulary words that misaki does not recognise.
+
+    espeak-ng is already a system dependency in the TTS Dockerfile — no new
+    Docker dependency is required.
+
+Why no executor:
+    create_stream() is a native async generator. It manages its own internal
+    threading for ONNX inference and yields chunks as they complete. Wrapping
+    it in run_in_executor + a nested event loop would fight the language.
+    We simply async for over it directly — clean, idiomatic, and safe.
+    Exceptions propagate naturally to the caller (synthesise_phrases in
+    remote_pipeline) which is already inside asyncio.gather with
+    return_exceptions=True.
+
+Audio output format:
+    Chunk 1: complete WAV file (44-byte header + float32 PCM, 24000 Hz mono)
+    Chunk 2+: raw float32 PCM bytes, no header, 24000 Hz mono
+
+Model files are downloaded once into /app/models/ during Docker build.
+"""
 import asyncio
-import logging
 import io
-import re
 from typing import AsyncIterator
 
+import os
 import numpy as np
 import soundfile as sf
 
 from voicekit.providers.base import TTSProvider
 
-FLUSH_CHARS = re.compile(r"[.!?,;:\n]")
-MAX_BUFFER_TOKENS = 3
-MIN_BUFFER_CHARS = 1
 SAMPLE_RATE = 24000
-MODEL_PATH = "/app/models/kokoro-v1.0.onnx"
-VOICES_PATH = "/app/models/voices-v1.0.bin"
+MODEL_PATH  = os.environ.get("KOKORO_MODEL_PATH",  "models/kokoro-v1.0.onnx")
+VOICES_PATH = os.environ.get("KOKORO_VOICES_PATH", "models/voices-v1.0.bin")
 
 class KokoroTTS(TTSProvider):
     """
-    Kokoro TTS via kokoro-onnx — true streaming on CPU.
+    Kokoro TTS via kokoro-onnx with misaki G2P phonemisation.
 
-    Uses create_stream() which is a native async generator that yields
-    audio chunks during inference, not after full synthesis completes.
-    Each chunk arrives in ~200-500ms on CPU, enabling real-time playback.
+    load() initialises both the Kokoro ONNX model and the misaki G2P engine
+    once at service startup. Both are reused across all synthesis requests.
 
-    Model files are downloaded once into /app/models/ during Docker build.
+    synthesize() accepts a single clean phrase string (already stripped of
+    markers and markdown by PhraseStream + clean_for_tts). It converts to
+    phonemes via misaki, then streams audio via create_stream().
     """
-    def __init__(self, voice: str = "af_bella", lang: str = "en-us"):
-        self.voice = voice
-        self.lang = lang
+    def __init__(self, voice: str = "af_bella", lang: str = "en-us") -> None:
+        self.voice   = voice
+        self.lang    = lang
         self._kokoro = None
+        self._g2p    = None
 
     async def load(self) -> None:
         loop = asyncio.get_event_loop()
@@ -37,68 +67,54 @@ class KokoroTTS(TTSProvider):
 
     def _load_sync(self) -> None:
         from kokoro_onnx import Kokoro
+        from misaki import en, espeak
+
         self._kokoro = Kokoro(MODEL_PATH, VOICES_PATH)
 
-    async def synthesize(
-        self,
-        text_stream: AsyncIterator[str],
-    ) -> AsyncIterator[bytes]:
-        """
-        Stream LLM tokens, yield audio bytes as kokoro-onnx generates them.
+        fallback  = espeak.EspeakFallback(british=False)
+        self._g2p = en.G2P(trf=False, british=False, fallback=fallback)
 
-        Buffers tokens until flush condition then calls create_stream()
-        which yields audio chunks progressively during ONNX inference.
-        First audio arrives within 200-500ms of first flush on CPU.
+    async def synthesize(self, phrase: str) -> AsyncIterator[bytes]:
         """
-        buffer = []
+        Synthesise a single clean phrase to audio chunks.
+
+        Phrase arrives already cleaned by PhraseStream — no markers,
+        no markdown, plain spoken English only.
+
+        Steps:
+            1. Strip and validate — skip empty phrases silently
+            2. G2P — convert text to phonemes via misaki (sync, fast)
+            3. create_stream() — async generator yields audio chunks
+            4. First chunk: write WAV header via soundfile, yield complete WAV
+               Subsequent chunks: yield raw float32 PCM bytes
+        """
+        phrase = phrase.strip()
+        if not phrase:
+            return
+
+        phonemes, _ = self._g2p(phrase)
+
         first_chunk = True
 
-        async def synthesise_phrase(text: str) -> AsyncIterator[bytes]:
-            nonlocal first_chunk
-            text = text.strip()
-            if not text:
-                return
+        async for samples, sample_rate in self._kokoro.create_stream(
+            phonemes,
+            voice=self.voice,
+            speed=1.0,
+            lang=self.lang,
+            is_phonemes=True,
+        ):
+            if samples is None or len(samples) == 0:
+                continue
 
-            stream = self._kokoro.create_stream(
-                text,
-                voice=self.voice,
-                speed=1.0,
-                lang=self.lang,
-            )
+            audio = samples.astype(np.float32)
 
-            async for samples, sample_rate in stream:
-                if samples is None or len(samples) == 0:
-                    continue
-
-                audio = samples.astype(np.float32)
-
-                if first_chunk:
-                    buf = io.BytesIO()
-                    sf.write(
-                        buf, audio, sample_rate,
-                        format="WAV", subtype="FLOAT"
-                    )
-                    yield buf.getvalue()
-                    first_chunk = False
-                else:
-                    yield audio.tobytes()
-
-        async for token in text_stream:
-            buffer.append(token)
-            joined = "".join(buffer)
-
-            on_punctuation = bool(FLUSH_CHARS.search(token))   # no minimum — flush immediately
-            on_max_tokens = len(buffer) >= MAX_BUFFER_TOKENS
-
-            if on_punctuation or on_max_tokens:
-                logging.getLogger(__name__).info(f"TTS flush: '{joined.strip()[:50]}'")
-                async for chunk in synthesise_phrase(joined):
-                    yield chunk
-                buffer = []
-
-        if buffer:
-            async for chunk in synthesise_phrase("".join(buffer)):
-                yield chunk
+            if first_chunk:
+                buf = io.BytesIO()
+                sf.write(buf, audio, sample_rate, format="WAV", subtype="FLOAT")
+                yield buf.getvalue()
+                first_chunk = False
+            else:
+                yield audio.tobytes()
 
     async def health(self) -> bool:
-        return self._kokoro is not None
+        return self._kokoro is not None and self._g2p is not None

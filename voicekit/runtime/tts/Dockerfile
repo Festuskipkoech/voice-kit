@@ -16,10 +16,9 @@ RUN pip install --no-cache-dir \
     soundfile \
     setuptools \
     onnxruntime \
-    kokoro-onnx>=0.5.0
+    "kokoro-onnx>=0.5.0" \
+    "misaki[en]==0.9.4"
 
-# download model files once at build time
-# they live at /app/models/ and are reused across container restarts
 RUN mkdir -p /app/models && \
     wget -q -O /app/models/kokoro-v1.0.onnx \
         https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.onnx && \

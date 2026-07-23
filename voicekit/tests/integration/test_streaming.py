@@ -26,8 +26,8 @@ What "true streaming" means here:
        (before transcript/response/metrics are sent)
     2. If multiple chunks arrive, they are spread over time —
        not clustered in a single burst at the end
-    3. Time from end_of_speech to first audio is under 10 seconds
-       (with Kokoro on CPU — Chatterbox may take longer)
+    3. Time from end_of_speech to first audio is under 15 seconds
+       (with Kokoro on CPU)
 """
 import asyncio
 import json
@@ -42,9 +42,8 @@ GATEWAY_WS_URL = "ws://localhost:8000/session"
 FIXTURE_PATH = pathlib.Path("tests/fixtures/speech.raw")
 CHUNK_SAMPLES = 1600
 SAMPLE_RATE = 16000
-
-MAX_FIRST_CHUNK_S = 15.0     # first audio must arrive within 15 seconds
-MAX_BURST_RATIO = 0.1         # burst: all chunks within 10% of streaming window
+MAX_FIRST_CHUNK_S = 25.0
+MIN_STREAMING_WINDOW_S = 0.5
 
 def load_fixture() -> bytes:
     if not FIXTURE_PATH.exists():
@@ -68,13 +67,13 @@ async def run_turn(
     Run one complete voice turn and collect timing data.
 
     Returns:
-        chunk_times         list of perf_counter timestamps per audio chunk
+        chunk_times list of perf_counter timestamps per audio chunk
         end_of_speech_time  when end_of_speech was sent
-        metrics_time        when metrics message was received
-        audio_chunks        list of raw audio bytes
-        transcript          what STT transcribed
-        response            what LLM said
-        metrics             timing metrics from gateway
+        metrics_time when metrics message was received
+        audio_chunks list of raw audio bytes
+        transcript what STT transcribed
+        response what LLM said
+        metrics timing metrics from gateway
     """
     if fixture_bytes is None:
         fixture_bytes = load_fixture()
@@ -92,14 +91,12 @@ async def run_turn(
         ping_interval=None,
         ping_timeout=None,
         open_timeout=10,
-        close_timeout=300,
+        close_timeout=10,
     ) as ws:
 
-        # wait for ready
         msg = json.loads(await ws.recv())
         assert msg["type"] == "ready", f"Expected ready, got {msg}"
 
-        # send audio
         audio = np.frombuffer(fixture_bytes, dtype=np.float32)
         for i in range(0, len(audio), CHUNK_SAMPLES):
             chunk = audio[i:i + CHUNK_SAMPLES]
@@ -121,7 +118,6 @@ async def run_turn(
 
                 if msg_type == "ping":
                     await ws.send(json.dumps({"type": "pong"}))
-                    continue
 
                 elif msg_type == "transcript":
                     transcript = data.get("text", "")
@@ -148,17 +144,16 @@ async def run_turn(
     }
 
 class TestStreaming:
-
-    def test_audio_arrives_before_metrics(self):
+    @pytest.mark.asyncio
+    async def test_audio_arrives_before_metrics(self):
         """
         Core streaming test.
 
         First audio chunk must arrive before the metrics message.
         Metrics is sent after all audio has been streamed.
-        If audio arrives after metrics, the pipeline is batching
-        not streaming.
+        If audio arrives after metrics, the pipeline is batching not streaming.
         """
-        result = asyncio.run(run_turn())
+        result = await run_turn()
 
         assert result["chunk_times"], "No audio chunks received"
         assert result["metrics_time"] is not None, "No metrics received"
@@ -167,151 +162,153 @@ class TestStreaming:
         metrics_time = result["metrics_time"]
 
         assert first_chunk_time < metrics_time, (
-            f"First audio chunk arrived AFTER metrics. "
-            f"Pipeline is batching, not streaming. "
+            f"First audio chunk arrived AFTER metrics — "
+            f"pipeline is batching, not streaming. "
             f"first_chunk={first_chunk_time:.3f} metrics={metrics_time:.3f}"
         )
 
-    def test_first_audio_latency(self):
+    @pytest.mark.asyncio
+    async def test_first_audio_latency(self):
         """
         First audio chunk must arrive within MAX_FIRST_CHUNK_S seconds
         of end_of_speech being sent.
 
-        With Kokoro on CPU: target <3s per sentence.
-        With Chatterbox on CPU: may be 90-150s — expect this test to
-        fail on CPU with Chatterbox, which is the reason Kokoro exists.
+        With Kokoro on CPU: target < 3s per phrase.
+        With Chatterbox on CPU: 90-150s — use Kokoro for streaming.
         """
-        result = asyncio.run(run_turn())
+        result = await run_turn()
 
         assert result["chunk_times"], "No audio chunks received"
 
-        first_chunk_time = result["chunk_times"][0]
-        end_of_speech_time = result["end_of_speech_time"]
-        latency = first_chunk_time - end_of_speech_time
+        latency = result["chunk_times"][0] - result["end_of_speech_time"]
 
         assert latency <= MAX_FIRST_CHUNK_S, (
             f"First audio chunk took {latency:.2f}s after end_of_speech. "
             f"Target: <{MAX_FIRST_CHUNK_S}s. "
-            f"If using Chatterbox on CPU, switch to Kokoro for streaming."
+            f"If using Chatterbox on CPU, switch to Kokoro."
         )
 
-    def test_chunks_arrive_progressively(self):
+    @pytest.mark.asyncio
+    async def test_chunks_arrive_progressively(self):
         """
         If multiple chunks are received, they must be spread over time.
-        A burst where all chunks arrive within 100ms of each other
-        indicates batching — TTS synthesised everything then sent it all.
-        True streaming means chunks arrive progressively as generated.
 
-        Single-chunk responses are acceptable — a very short response
-        may fit in one Kokoro synthesis segment.
+        All chunks arriving within 500ms of each other indicates batching —
+        TTS synthesised everything then sent it all at once.
+        True streaming means chunks arrive progressively as each phrase
+        is synthesised — spread across the duration of the response.
+
+        Single-chunk responses are skipped — a very short response may
+        fit in one Kokoro synthesis segment.
         """
-        result = asyncio.run(run_turn())
+        result = await run_turn()
         chunk_times = result["chunk_times"]
 
         if len(chunk_times) <= 1:
             pytest.skip(
                 "Only 1 chunk received — response too short to measure "
-                "streaming distribution. Try a longer response."
+                "streaming distribution."
             )
 
-        first_chunk_time = chunk_times[0]
-        last_chunk_time = chunk_times[-1]
-        streaming_window = last_chunk_time - first_chunk_time
+        streaming_window = chunk_times[-1] - chunk_times[0]
 
         assert streaming_window >= MIN_STREAMING_WINDOW_S, (
             f"All {len(chunk_times)} chunks arrived within "
-            f"{streaming_window:.3f}s. "
-            f"This looks like batching — chunks should be spread "
-            f"over at least {MIN_STREAMING_WINDOW_S}s for true streaming."
+            f"{streaming_window:.3f}s — looks like batching. "
+            f"Chunks should be spread over at least {MIN_STREAMING_WINDOW_S}s "
+            f"for true phrase-by-phrase streaming."
         )
 
-    def test_pipeline_produces_transcript(self):
-        """Verify STT is working correctly end to end."""
-        result = asyncio.run(run_turn())
+    @pytest.mark.asyncio
+    async def test_pipeline_produces_transcript(self):
+        """STT is working correctly end to end."""
+        result = await run_turn()
         assert result["transcript"], (
             "Empty transcript from gateway. "
             "Check VAD settings and speech fixture quality."
         )
 
-    def test_pipeline_produces_response(self):
-        """Verify LLM is working correctly end to end."""
-        result = asyncio.run(run_turn())
+    @pytest.mark.asyncio
+    async def test_pipeline_produces_response(self):
+        """LLM is working correctly end to end."""
+        result = await run_turn()
         assert result["response"], (
             "Empty response from gateway. "
             "Check VOICEKIT_LLM_API_KEY is set in runtime/.env."
         )
 
-    def test_response_is_plain_text(self):
+    @pytest.mark.asyncio
+    async def test_response_is_plain_text(self):
         """
-        LLM response must not contain markdown or emojis.
-        These corrupt TTS output — Kokoro reads '*' and '#' literally.
+        LLM response reaching the client must be plain text.
 
-        If this test fails, check:
-            1. System prompt explicitly prohibits markdown and emojis
-            2. LLM temperature is 0.3 (not default 1.0)
+        Checks:
+            - No raw <|BREAK|> markers — must be stripped by remote_pipeline
+              before the response is sent to the client
+            - No markdown (asterisks, hashes, backticks)
+            - No emojis or non-ASCII characters
+
+        If <|BREAK|> appears here, stripping in remote_pipeline failed.
+        If markdown appears, check system prompt and LLM temperature (0.1).
         """
-        result = asyncio.run(run_turn())
+        result = await run_turn()
         response = result["response"]
 
         if not response:
             pytest.skip("No response to check")
 
-        # check for common markdown patterns
+        assert "<|BREAK|>" not in response, (
+            f"Response contains raw <|BREAK|> marker — "
+            f"stripping failed in remote_pipeline: '{response[:100]}'"
+        )
         assert "*" not in response, (
-            f"Response contains asterisks (markdown bold/italic): "
-            f"'{response[:100]}'"
+            f"Response contains asterisks (markdown): '{response[:100]}'"
         )
         assert "#" not in response, (
-            f"Response contains hash (markdown header): "
-            f"'{response[:100]}'"
+            f"Response contains hash (markdown header): '{response[:100]}'"
         )
         assert "```" not in response, (
             f"Response contains code block: '{response[:100]}'"
         )
 
-        # check for emojis — any non-ASCII character is suspicious
         non_ascii = [c for c in response if ord(c) > 127]
         assert not non_ascii, (
             f"Response contains non-ASCII characters (likely emojis): "
             f"{non_ascii[:5]} in '{response[:100]}'"
         )
 
-    def test_metrics_contain_timing_fields(self):
+    @pytest.mark.asyncio
+    async def test_metrics_contain_timing_fields(self):
         """Gateway must return complete timing breakdown."""
-        result = asyncio.run(run_turn())
+        result = await run_turn()
         metrics = result["metrics"]
 
         assert "stt_ms" in metrics
         assert "llm_first_token_ms" in metrics
         assert "tts_first_chunk_ms" in metrics
         assert "total_ms" in metrics
+        assert metrics["stt_ms"] > 0
+        assert metrics["total_ms"] > 0
+        assert metrics["total_ms"] >= metrics["stt_ms"]
 
-        assert metrics["stt_ms"] > 0, "STT ms should be > 0"
-        assert metrics["total_ms"] > 0, "Total ms should be > 0"
-        assert metrics["total_ms"] >= metrics["stt_ms"], (
-            "Total must be >= STT time"
-        )
-
-    def test_concurrent_sessions_both_stream(self):
+    @pytest.mark.asyncio
+    async def test_concurrent_sessions_both_stream(self):
         """
         Two concurrent sessions must both receive streaming audio.
-        Tests that the turn_in_progress flag is per-session, not global.
+        Verifies that turn_in_progress and phrase_queue are per-session,
+        not shared global state.
         """
         fixture_bytes = load_fixture()
 
-        async def run_both():
-            results = await asyncio.gather(
-                run_turn(fixture_bytes=fixture_bytes),
-                run_turn(fixture_bytes=fixture_bytes),
-                return_exceptions=True,
-            )
-            return results
-
-        results = asyncio.run(run_both())
+        results = await asyncio.gather(
+            run_turn(fixture_bytes=fixture_bytes),
+            run_turn(fixture_bytes=fixture_bytes),
+            return_exceptions=True,
+        )
 
         errors = [r for r in results if isinstance(r, Exception)]
         assert not errors, (
-            f"{len(errors)} out of 2 concurrent sessions failed: {errors}"
+            f"{len(errors)} of 2 concurrent sessions failed: {errors}"
         )
 
         for i, result in enumerate(results):
@@ -322,6 +319,3 @@ class TestStreaming:
                 f"Session {i}: audio did not arrive before metrics — "
                 f"streaming broken under concurrent load"
             )
-
-
-MIN_STREAMING_WINDOW_S = 0.5

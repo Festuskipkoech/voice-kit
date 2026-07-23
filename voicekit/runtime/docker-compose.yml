@@ -40,8 +40,10 @@ services:
     ports:
       - "8002:8002"
     environment:
-      VOICEKIT_TTS_MODEL: ${VOICEKIT_TTS_MODEL:-chatterbox-turbo}
-      VOICEKIT_TTS_VOICE: ${VOICEKIT_TTS_VOICE:-default}
+      VOICEKIT_TTS_MODEL: ${VOICEKIT_TTS_MODEL:-kokoro}
+      VOICEKIT_TTS_VOICE: ${VOICEKIT_TTS_VOICE:-af_bella}
+      KOKORO_MODEL_PATH: /app/models/kokoro-v1.0.onnx
+      KOKORO_VOICES_PATH: /app/models/voices-v1.0.bin
     volumes:
       - chatterbox_cache:/root/.cache/huggingface
     healthcheck:
@@ -63,14 +65,13 @@ services:
       VOICEKIT_PROJECT: ${VOICEKIT_PROJECT:-voicekit}
       VOICEKIT_STT_MODEL: ${VOICEKIT_STT_MODEL:-whisper}
       VOICEKIT_STT_VARIANT: ${VOICEKIT_STT_VARIANT:-small}
-      VOICEKIT_TTS_MODEL: ${VOICEKIT_TTS_MODEL:-chatterbox-turbo}
-      VOICEKIT_TTS_VOICE: ${VOICEKIT_TTS_VOICE:-default}
+      VOICEKIT_TTS_MODEL: ${VOICEKIT_TTS_MODEL:-kokoro}
+      VOICEKIT_TTS_VOICE: ${VOICEKIT_TTS_VOICE:-af_bella}
       VOICEKIT_LLM_PROVIDER: ${VOICEKIT_LLM_PROVIDER:-anthropic}
       VOICEKIT_LLM_MODEL: ${VOICEKIT_LLM_MODEL:-claude-haiku-4-5}
       VOICEKIT_LLM_API_KEY: ${VOICEKIT_LLM_API_KEY:-}
       VOICEKIT_VAD_ENABLED: ${VOICEKIT_VAD_ENABLED:-true}
       VOICEKIT_VAD_SENSITIVITY: ${VOICEKIT_VAD_SENSITIVITY:-0.5}
-      VOICEKIT_SYSTEM_PROMPT: ${VOICEKIT_SYSTEM_PROMPT:-You are a helpful voice assistant.}
       REDIS_HOST: redis
       REDIS_PORT: 6379
       STT_WS_URL: ws://stt:8001/stt
