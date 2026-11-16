@@ -1,35 +1,36 @@
 services:
 
-  # writes ./voicekit-data/config.toml from the template if missing
+  # Writes ./voicekit-data/config.toml from the baked-in template on first run.
+  # On subsequent runs validates the existing config and exits.
   config-init:
-    image: python:3.12-slim
+    image: ghcr.io/festuskipkoech/voicekit:latest
+    entrypoint: ["sh", "/etc/voicekit/init_config.sh"]
     volumes:
       - ./voicekit-data:/data
-      - ./config.template.toml:/etc/voicekit/config.template.toml:ro
-      - ./scripts/init_config.sh:/init_config.sh:ro
-    entrypoint: ["sh", "/init_config.sh"]
     restart: "no"
 
-  # downloads and verifies model weights into ./models
+  # Downloads and verifies model weights into ./models.
+  # Skips files that are already present and checksums match.
   model-init:
-    build:
-      context: .
-      dockerfile: Dockerfile.tools
+    image: ghcr.io/festuskipkoech/voicekit:latest
+    entrypoint:
+      - python3
+      - -I
+      - /etc/voicekit/download_models.py
+      - --config
+      - /data/config.toml
+      - --dest
+      - /models
     volumes:
       - ./models:/models
       - ./voicekit-data:/data:ro
-      - ./scripts/download_models.py:/download_models.py:ro
-      - ./models.toml:/etc/voicekit/models.toml:ro 
-    entrypoint: ["python3", "-I", "/download_models.py", "--config", "/data/config.toml", "--dest", "/models"]
     depends_on:
       config-init:
         condition: service_completed_successfully
     restart: "no"
 
   voicekit-server:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    image: ghcr.io/festuskipkoech/voicekit:latest
     ports:
       - "${VOICEKIT_PORT:-8080}:8080"
     volumes:
