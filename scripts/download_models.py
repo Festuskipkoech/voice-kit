@@ -148,7 +148,9 @@ def main():
 
     registry = load_registry(REGISTRY_PATH)
     dest.mkdir(parents=True, exist_ok=True)
-
+    dest.mkdir(parents=True, exist_ok=True)
+    dest.chmod(0o777)
+    
     failed = []
 
     for name, entry in registry.items():
