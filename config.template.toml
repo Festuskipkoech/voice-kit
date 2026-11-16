@@ -1,0 +1,31 @@
+[server]
+host = "0.0.0.0"
+port = 8080
+max_connections = 4
+
+[session_policy]
+allow_system_prompt_override = false
+allow_voice_override = false
+allow_vad_override = false
+
+[vad]
+model = "silero-vad"
+threshold = 0.5
+silence_ms = 800
+chunk_samples = 512
+
+[stt]
+provider = "moonshine"
+model = "moonshine-tiny"
+
+[llm]
+provider = "llamacpp"
+model = "gemma3-1b-q4"
+context_size = 2048
+system_prompt = "You are a helpful voice assistant. Respond in plain spoken English only. No markdown, no bullet points, no emoji. Keep answers short and conversational."
+
+[tts]
+provider = "paradee"
+model = "paradee-int8"
+voice = "af_heart"
+sample_rate = 24000

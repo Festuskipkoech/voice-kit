@@ -1,0 +1,565 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<title>Voicekit Architecture</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Inter:wght@400;500;600&display=swap">
+
+<style>
+/* ── Layout: two-column reference page, diagram-first ── */
+:root {
+  --bg:        #0d1117;
+  --surface:   #161b22;
+  --border:    #30363d;
+  --fg:        #e6edf3;
+  --muted:     #8b949e;
+  --accent:    #58a6ff;
+  --accent2:   #3fb950;
+  --accent3:   #d29922;
+  --warn:      #f85149;
+  --pill-bg:   #21262d;
+  color-scheme: dark;
+}
+/* single deliberate dark theme — this is a technical reference, dark is correct */
+
+*, *::before, *::after { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: 'Inter', system-ui, sans-serif;
+  font-size: 14px;
+  line-height: 1.6;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 32px;
+}
+
+h1 {
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -.3px;
+  margin: 0 0 4px;
+  color: var(--fg);
+}
+.subtitle {
+  font-size: 13px;
+  color: var(--muted);
+  margin: 0 0 36px;
+  font-family: 'JetBrains Mono', monospace;
+}
+.badge {
+  display: inline-block;
+  font-size: 11px;
+  font-family: 'JetBrains Mono', monospace;
+  background: var(--pill-bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 6px;
+  margin-left: 6px;
+  vertical-align: middle;
+  color: var(--muted);
+}
+.badge.rust  { color: #e06c75; border-color: #e06c7540; }
+.badge.onnx  { color: var(--accent); border-color: #58a6ff40; }
+.badge.llm   { color: var(--accent2); border-color: #3fb95040; }
+.badge.ws    { color: var(--accent3); border-color: #d2992240; }
+
+section {
+  max-width: 900px;
+  margin: 0 auto 48px;
+}
+section h2 {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin: 0 0 16px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+figure {
+  margin: 0 0 8px;
+  overflow-x: auto;
+}
+figcaption {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 10px;
+  font-style: italic;
+}
+
+svg text {
+  font-family: 'JetBrains Mono', monospace;
+}
+
+/* trait table */
+.trait-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+@media (max-width: 600px) {
+  .trait-grid { grid-template-columns: 1fr; }
+}
+.trait-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 14px 16px;
+}
+.trait-card .trait-name {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent);
+  margin-bottom: 8px;
+}
+.trait-card .method {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--muted);
+  margin: 3px 0;
+}
+.trait-card .method span { color: var(--fg); }
+
+/* latency table */
+.latency-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
+.latency-row:last-child { border-bottom: none; }
+.latency-stage {
+  font-family: 'JetBrains Mono', monospace;
+  width: 180px;
+  flex-shrink: 0;
+  color: var(--fg);
+}
+.latency-bar-wrap {
+  flex: 1;
+  background: var(--pill-bg);
+  border-radius: 3px;
+  height: 8px;
+  min-width: 0;
+  overflow: hidden;
+}
+.latency-bar { height: 100%; border-radius: 3px; }
+.latency-ms {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  color: var(--muted);
+  width: 70px;
+  text-align: right;
+  flex-shrink: 0;
+}
+
+/* docker table */
+.docker-line {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  line-height: 1.8;
+  color: var(--muted);
+}
+.docker-line .k { color: #e06c75; }
+.docker-line .v { color: var(--accent2); }
+.docker-line .c { color: #6a737d; }
+.code-block {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 16px 18px;
+}
+
+/* value pills */
+.value-pair {
+  display: flex;
+  gap: 16px;
+  margin-top: 12px;
+}
+@media (max-width: 500px) { .value-pair { flex-direction: column; } }
+.value-card {
+  flex: 1;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 14px 16px;
+}
+.value-card .vname {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin-bottom: 6px;
+}
+.value-card p { margin: 0; font-size: 13px; color: var(--muted); }
+</style>
+
+<!-- ═══════════════════════════════════════════════════════ -->
+<!--  HEADER                                                 -->
+<!-- ═══════════════════════════════════════════════════════ -->
+<section>
+  <h1>Voicekit</h1>
+  <p class="subtitle">production voice-agent engine · rust · onnx · llama.cpp · websocket</p>
+
+  <div class="value-pair">
+    <div class="value-card">
+      <div class="vname">Flexibility</div>
+      <p>Trait-based engine abstraction. Swap STT, LLM, or TTS by changing one line in <code>config.toml</code>; no recompile, no code change.</p>
+    </div>
+    <div class="value-card">
+      <div class="vname">Latency</div>
+      <p>LLM token stream feeds the TTS in parallel. First audio chunk plays before the LLM finishes generating. Total target: &lt;3 s end-to-end on CPU.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════ -->
+<!--  DIAGRAM 1: LAYER STACK                                 -->
+<!-- ═══════════════════════════════════════════════════════ -->
+<section>
+  <h2>Package Layers</h2>
+  <figure>
+    <svg viewBox="0 0 820 300" role="img" aria-label="Four-layer package diagram: Python/JS/Go SDKs on top, voicekit-server and voicekit-cli in the middle, voicekit-core at the bottom"
+         style="max-width:100%;height:auto;display:block;">
+      <defs>
+        <marker id="arr" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto">
+          <polygon points="0,0 8,3 0,6" fill="currentColor" opacity=".5"/>
+        </marker>
+      </defs>
+
+      <!-- SDK row -->
+      <rect x="20"  y="20" width="230" height="52" rx="5" fill="#21262d" stroke="#58a6ff" stroke-width="1.2"/>
+      <text x="135" y="41"  text-anchor="middle" font-size="11" fill="#58a6ff" font-weight="600">Python SDK</text>
+      <text x="135" y="58"  text-anchor="middle" font-size="10" fill="#8b949e">pip install voicekit</text>
+
+      <rect x="295" y="20" width="230" height="52" rx="5" fill="#21262d" stroke="#58a6ff" stroke-width="1.2"/>
+      <text x="410" y="41"  text-anchor="middle" font-size="11" fill="#58a6ff" font-weight="600">JavaScript SDK</text>
+      <text x="410" y="58"  text-anchor="middle" font-size="10" fill="#8b949e">npm install voicekit</text>
+
+      <rect x="570" y="20" width="230" height="52" rx="5" fill="#21262d" stroke="#58a6ff" stroke-width="1.2"/>
+      <text x="685" y="41"  text-anchor="middle" font-size="11" fill="#58a6ff" font-weight="600">Go SDK</text>
+      <text x="685" y="58"  text-anchor="middle" font-size="10" fill="#8b949e">go get github.com/voicekit/go</text>
+
+      <!-- arrows SDK → server -->
+      <line x1="135" y1="72" x2="310" y2="118" stroke="currentColor" stroke-width="1" stroke-dasharray="4,3" opacity=".35" marker-end="url(#arr)"/>
+      <line x1="410" y1="72" x2="410" y2="118" stroke="currentColor" stroke-width="1" stroke-dasharray="4,3" opacity=".35" marker-end="url(#arr)"/>
+      <line x1="685" y1="72" x2="510" y2="118" stroke="currentColor" stroke-width="1" stroke-dasharray="4,3" opacity=".35" marker-end="url(#arr)"/>
+      <text x="420" y="104" font-size="9" fill="#8b949e">WebSocket ws://</text>
+
+      <!-- server + cli row -->
+      <rect x="140" y="120" width="260" height="52" rx="5" fill="#21262d" stroke="#d29922" stroke-width="1.2"/>
+      <text x="270" y="141"  text-anchor="middle" font-size="11" fill="#d29922" font-weight="600">voicekit-server</text>
+      <text x="270" y="158"  text-anchor="middle" font-size="10" fill="#8b949e">binary / Docker image</text>
+
+      <rect x="430" y="120" width="260" height="52" rx="5" fill="#21262d" stroke="#d29922" stroke-width="1.2"/>
+      <text x="560" y="141"  text-anchor="middle" font-size="11" fill="#d29922" font-weight="600">voicekit-cli</text>
+      <text x="560" y="158"  text-anchor="middle" font-size="10" fill="#8b949e">model download · health · benchmark</text>
+
+      <!-- arrows server+cli → core -->
+      <line x1="270" y1="172" x2="370" y2="228" stroke="currentColor" stroke-width="1" stroke-dasharray="4,3" opacity=".35" marker-end="url(#arr)"/>
+      <line x1="560" y1="172" x2="460" y2="228" stroke="currentColor" stroke-width="1" stroke-dasharray="4,3" opacity=".35" marker-end="url(#arr)"/>
+      <text x="420" y="210" text-anchor="middle" font-size="9" fill="#8b949e">Rust crate dep</text>
+
+      <!-- core -->
+      <rect x="200" y="230" width="420" height="52" rx="5" fill="#21262d" stroke="#3fb950" stroke-width="1.5"/>
+      <text x="410" y="251"  text-anchor="middle" font-size="11" fill="#3fb950" font-weight="600">voicekit-core</text>
+      <text x="410" y="268"  text-anchor="middle" font-size="10" fill="#8b949e">SttEngine · LlmEngine · TtsEngine · VAD · Session</text>
+    </svg>
+    <figcaption>SDKs speak WebSocket to voicekit-server. The server and CLI are both thin binaries that link voicekit-core. voicekit-core owns all inference logic.</figcaption>
+  </figure>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════ -->
+<!--  DIAGRAM 2: REAL-TIME PIPELINE                          -->
+<!-- ═══════════════════════════════════════════════════════ -->
+<section>
+  <h2>Real-Time Pipeline — one WebSocket session</h2>
+  <figure>
+    <svg viewBox="0 0 820 390" role="img" aria-label="Real-time pipeline: audio PCM arrives over WebSocket, passes through VAD, then STT, then streaming LLM, then sentence buffer, then TTS, then audio back over WebSocket"
+         style="max-width:100%;height:auto;display:block;">
+      <defs>
+        <marker id="arr2" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto">
+          <polygon points="0,0 8,3 0,6" fill="currentColor" opacity=".6"/>
+        </marker>
+        <marker id="arr-green" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto">
+          <polygon points="0,0 8,3 0,6" fill="#3fb950"/>
+        </marker>
+        <marker id="arr-blue" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto">
+          <polygon points="0,0 8,3 0,6" fill="#58a6ff"/>
+        </marker>
+        <marker id="arr-gold" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto">
+          <polygon points="0,0 8,3 0,6" fill="#d29922"/>
+        </marker>
+      </defs>
+
+      <!-- CLIENT box -->
+      <rect x="20" y="155" width="90" height="60" rx="5" fill="#21262d" stroke="#58a6ff" stroke-width="1.2"/>
+      <text x="65" y="181" text-anchor="middle" font-size="11" fill="#58a6ff" font-weight="600">Client</text>
+      <text x="65" y="196" text-anchor="middle" font-size="9" fill="#8b949e">mic PCM</text>
+      <text x="65" y="208" text-anchor="middle" font-size="9" fill="#8b949e">16 kHz f32</text>
+
+      <!-- WS IN arrow -->
+      <line x1="110" y1="185" x2="148" y2="185" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#arr-blue)"/>
+      <text x="128" y="178" text-anchor="middle" font-size="9" fill="#58a6ff">ws://</text>
+
+      <!-- TOKIO SESSION box (tall, wraps pipeline) -->
+      <rect x="150" y="20" width="560" height="340" rx="6" fill="none" stroke="#30363d" stroke-width="1" stroke-dasharray="6,3"/>
+      <text x="162" y="38" font-size="9" fill="#8b949e" font-style="italic">tokio::spawn — one task per session</text>
+
+      <!-- VAD -->
+      <rect x="168" y="155" width="90" height="60" rx="5" fill="#21262d" stroke="#8b949e" stroke-width="1.2"/>
+      <text x="213" y="178" text-anchor="middle" font-size="11" fill="#e6edf3" font-weight="600">VAD</text>
+      <text x="213" y="193" text-anchor="middle" font-size="9" fill="#8b949e">Silero ONNX</text>
+      <text x="213" y="206" text-anchor="middle" font-size="9" fill="#8b949e">512-sample chunks</text>
+
+      <!-- VAD→STT -->
+      <line x1="258" y1="185" x2="296" y2="185" stroke="currentColor" stroke-width="1.5" marker-end="url(#arr2)"/>
+      <text x="277" y="178" text-anchor="middle" font-size="9" fill="#8b949e">utterance</text>
+
+      <!-- STT -->
+      <rect x="298" y="155" width="90" height="60" rx="5" fill="#21262d" stroke="#8b949e" stroke-width="1.2"/>
+      <text x="343" y="178" text-anchor="middle" font-size="11" fill="#e6edf3" font-weight="600">STT</text>
+      <text x="343" y="193" text-anchor="middle" font-size="9" fill="#8b949e">Moonshine TINY</text>
+      <text x="343" y="206" text-anchor="middle" font-size="9" fill="#8b949e">ONNX · ~376 ms</text>
+
+      <!-- STT→LLM -->
+      <line x1="388" y1="185" x2="426" y2="185" stroke="currentColor" stroke-width="1.5" marker-end="url(#arr2)"/>
+      <text x="407" y="178" text-anchor="middle" font-size="9" fill="#8b949e">text</text>
+
+      <!-- LLM -->
+      <rect x="428" y="155" width="90" height="60" rx="5" fill="#21262d" stroke="#3fb950" stroke-width="1.2"/>
+      <text x="473" y="175" text-anchor="middle" font-size="11" fill="#3fb950" font-weight="600">LLM</text>
+      <text x="473" y="190" text-anchor="middle" font-size="9" fill="#8b949e">Gemma 3 1B</text>
+      <text x="473" y="203" text-anchor="middle" font-size="9" fill="#8b949e">GGUF Q4_K_M</text>
+      <text x="473" y="215" text-anchor="middle" font-size="9" fill="#3fb950">streams tokens ↓</text>
+
+      <!-- LLM streaming tokens → Sentence Buffer (downward) -->
+      <line x1="473" y1="215" x2="473" y2="263" stroke="#3fb950" stroke-width="1.5" stroke-dasharray="3,2" marker-end="url(#arr-green)"/>
+
+      <!-- Sentence Buffer -->
+      <rect x="368" y="265" width="210" height="52" rx="5" fill="#21262d" stroke="#3fb950" stroke-width="1.2"/>
+      <text x="473" y="286" text-anchor="middle" font-size="11" fill="#3fb950" font-weight="600">Sentence Buffer</text>
+      <text x="473" y="300" text-anchor="middle" font-size="9" fill="#8b949e">sentencex · flush on . ? ! or 200 chars</text>
+
+      <!-- SentenceBuf → TTS (leftward, upward) -->
+      <line x1="368" y1="291" x2="308" y2="260" stroke="#d29922" stroke-width="1.5" marker-end="url(#arr-gold)"/>
+      <text x="322" y="270" text-anchor="middle" font-size="9" fill="#d29922">sentence</text>
+
+      <!-- TTS -->
+      <rect x="168" y="230" width="130" height="52" rx="5" fill="#21262d" stroke="#d29922" stroke-width="1.2"/>
+      <text x="233" y="253" text-anchor="middle" font-size="11" fill="#d29922" font-weight="600">TTS</text>
+      <text x="233" y="268" text-anchor="middle" font-size="9" fill="#8b949e">Paradee int8 ONNX · ~708 ms</text>
+
+      <!-- OVERLAP annotation -->
+      <rect x="168" y="310" width="400" height="30" rx="4" fill="#21262d" stroke="#d29922" stroke-width="1" stroke-dasharray="3,2"/>
+      <text x="370" y="329" text-anchor="middle" font-size="10" fill="#d29922">LLM and TTS run in parallel — first audio before generation finishes</text>
+
+      <!-- TTS → WS OUT (upward back to top-right area) -->
+      <line x1="233" y1="230" x2="233" y2="185" stroke="#d29922" stroke-width="1" stroke-dasharray="3,2" opacity=".5"/>
+      <line x1="233" y1="185" x2="168" y2="185" stroke="#d29922" stroke-width="1" stroke-dasharray="3,2" opacity=".5"/>
+
+      <!-- WS OUT -->
+      <line x1="710" y1="185" x2="748" y2="185" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#arr-blue)"/>
+      <text x="729" y="178" text-anchor="middle" font-size="9" fill="#58a6ff">ws://</text>
+
+      <!-- CLIENT OUT box -->
+      <rect x="750" y="155" width="52" height="60" rx="5" fill="#21262d" stroke="#58a6ff" stroke-width="1.2"/>
+      <text x="776" y="181" text-anchor="middle" font-size="10" fill="#58a6ff" font-weight="600">Client</text>
+      <text x="776" y="196" text-anchor="middle" font-size="9" fill="#8b949e">audio</text>
+      <text x="776" y="208" text-anchor="middle" font-size="9" fill="#8b949e">PCM out</text>
+
+      <!-- draw TTS audio out path: TTS box right edge → right of session box → WS OUT -->
+      <line x1="298" y1="256" x2="710" y2="256" stroke="#d29922" stroke-width="1.2" stroke-dasharray="4,3"/>
+      <line x1="710" y1="256" x2="710" y2="185" stroke="#d29922" stroke-width="1.2" stroke-dasharray="4,3" marker-end="url(#arr-gold)"/>
+      <text x="504" y="248" text-anchor="middle" font-size="9" fill="#d29922">audio chunk PCM 24 kHz</text>
+
+      <!-- config.toml annotation -->
+      <rect x="558" y="60" width="145" height="78" rx="4" fill="#21262d" stroke="#30363d" stroke-width="1"/>
+      <text x="574" y="78" font-size="9" fill="#8b949e" font-style="italic">config.toml</text>
+      <text x="574" y="94"  font-size="9" fill="#e06c75">[stt]  </text><text x="610" y="94"  font-size="9" fill="#3fb950">provider = "moonshine"</text>
+      <text x="574" y="108" font-size="9" fill="#e06c75">[llm]  </text><text x="610" y="108" font-size="9" fill="#3fb950">provider = "llamacpp"</text>
+      <text x="574" y="122" font-size="9" fill="#e06c75">[tts]  </text><text x="610" y="122" font-size="9" fill="#3fb950">provider = "paradee"</text>
+    </svg>
+    <figcaption>Each WebSocket session gets one Tokio task. VAD buffers until 800 ms silence, then dispatches the full utterance to STT. The LLM streams tokens into the sentence buffer; each completed sentence fires TTS immediately — the client hears audio while the LLM is still generating.</figcaption>
+  </figure>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════ -->
+<!--  TRAIT SYSTEM                                           -->
+<!-- ═══════════════════════════════════════════════════════ -->
+<section>
+  <h2>Engine Traits — the flexibility contract</h2>
+  <div class="trait-grid">
+    <div class="trait-card">
+      <div class="trait-name">SttEngine</div>
+      <div class="method"><span>fn transcribe(</span></div>
+      <div class="method" style="padding-left:14px"><span>&amp;self,</span></div>
+      <div class="method" style="padding-left:14px"><span>audio: &amp;[f32]</span></div>
+      <div class="method"><span>) -&gt; String</span></div>
+      <br>
+      <div class="method" style="color:#6a737d">// impl: MoonshineEngine</div>
+      <div class="method" style="color:#6a737d">// impl: WhisperEngine</div>
+    </div>
+    <div class="trait-card">
+      <div class="trait-name">LlmEngine</div>
+      <div class="method"><span>fn generate(</span></div>
+      <div class="method" style="padding-left:14px"><span>&amp;self,</span></div>
+      <div class="method" style="padding-left:14px"><span>prompt: &amp;str,</span></div>
+      <div class="method" style="padding-left:14px"><span>tx: Sender&lt;String&gt;</span></div>
+      <div class="method"><span>)</span></div>
+      <br>
+      <div class="method" style="color:#6a737d">// impl: LlamaCppEngine</div>
+      <div class="method" style="color:#6a737d">// impl: OpenAIEngine</div>
+    </div>
+    <div class="trait-card">
+      <div class="trait-name">TtsEngine</div>
+      <div class="method"><span>fn synthesize(</span></div>
+      <div class="method" style="padding-left:14px"><span>&amp;self,</span></div>
+      <div class="method" style="padding-left:14px"><span>text: &amp;str</span></div>
+      <div class="method"><span>) -&gt; Vec&lt;f32&gt;</span></div>
+      <br>
+      <div class="method" style="color:#6a737d">// impl: ParadeeEngine</div>
+      <div class="method" style="color:#6a737d">// impl: KokoroEngine</div>
+    </div>
+  </div>
+  <p style="font-size:12px;color:#8b949e;margin-top:12px;">
+    <code style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#e6edf3;">config.toml</code> selects the provider string at startup. The server holds
+    <code style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#e6edf3;">Box&lt;dyn SttEngine&gt;</code> etc., so a new model ships as a new struct that
+    implements the trait — no changes to the session loop.
+  </p>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════ -->
+<!--  LATENCY BUDGET                                         -->
+<!-- ═══════════════════════════════════════════════════════ -->
+<section>
+  <h2>Measured Latency Budget (CPU, Ubuntu 24.04)</h2>
+
+  <div style="max-width:600px;">
+    <div class="latency-row">
+      <div class="latency-stage">VAD (512-chunk)</div>
+      <div class="latency-bar-wrap"><div class="latency-bar" style="width:4%;background:#8b949e;"></div></div>
+      <div class="latency-ms">&lt;10 ms</div>
+    </div>
+    <div class="latency-row">
+      <div class="latency-stage">STT · Moonshine TINY</div>
+      <div class="latency-bar-wrap"><div class="latency-bar" style="width:14%;background:#8b949e;"></div></div>
+      <div class="latency-ms">~376 ms</div>
+    </div>
+    <div class="latency-row">
+      <div class="latency-stage">LLM · Gemma 3 1B Q4</div>
+      <div class="latency-bar-wrap"><div class="latency-bar" style="width:60%;background:#3fb950;"></div></div>
+      <div class="latency-ms">~1578 ms</div>
+    </div>
+    <div class="latency-row">
+      <div class="latency-stage">TTS · Paradee int8</div>
+      <div class="latency-bar-wrap"><div class="latency-bar" style="width:27%;background:#d29922;"></div></div>
+      <div class="latency-ms">~708 ms</div>
+    </div>
+    <div class="latency-row" style="border-top:1px solid #58a6ff40;border-bottom:none;padding-top:12px;margin-top:4px;">
+      <div class="latency-stage" style="color:#58a6ff;font-weight:600;">Total (sequential)</div>
+      <div class="latency-bar-wrap"><div class="latency-bar" style="width:100%;background:#58a6ff40;"></div></div>
+      <div class="latency-ms" style="color:#58a6ff;">~2661 ms</div>
+    </div>
+    <div class="latency-row" style="border-bottom:none;">
+      <div class="latency-stage" style="color:#3fb950;font-weight:600;">First audio (streamed)</div>
+      <div class="latency-bar-wrap"><div class="latency-bar" style="width:40%;background:#3fb95040;"></div></div>
+      <div class="latency-ms" style="color:#3fb950;">~1100 ms</div>
+    </div>
+  </div>
+  <p style="font-size:12px;color:#8b949e;margin-top:10px;">
+    "First audio" = STT + first LLM sentence + TTS of that sentence. LLM and TTS overlap after that, so the user hears a response before generation completes.
+  </p>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════ -->
+<!--  DOCKER DEPLOY                                          -->
+<!-- ═══════════════════════════════════════════════════════ -->
+<section>
+  <h2>Docker Deployment</h2>
+  <figure>
+    <svg viewBox="0 0 820 200" role="img" aria-label="Docker deployment: multi-stage build produces a 15-30MB binary image; models live in a separate volume mounted at runtime"
+         style="max-width:100%;height:auto;display:block;">
+      <defs>
+        <marker id="arr3" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto">
+          <polygon points="0,0 8,3 0,6" fill="currentColor" opacity=".5"/>
+        </marker>
+      </defs>
+
+      <!-- Stage 1: builder -->
+      <rect x="20" y="40" width="200" height="100" rx="5" fill="#21262d" stroke="#30363d" stroke-width="1.2"/>
+      <text x="30" y="62" font-size="10" fill="#8b949e">Stage 1</text>
+      <text x="120" y="62" text-anchor="middle" font-size="11" fill="#e6edf3" font-weight="600">rust:1.82-slim</text>
+      <text x="120" y="82" text-anchor="middle" font-size="10" fill="#8b949e">cargo build --release</text>
+      <text x="120" y="98" text-anchor="middle" font-size="10" fill="#8b949e">features: onnx, llamacpp</text>
+      <text x="120" y="114" text-anchor="middle" font-size="10" fill="#8b949e">output: /app/voicekit-server</text>
+
+      <!-- arrow builder → runtime -->
+      <line x1="220" y1="90" x2="268" y2="90" stroke="currentColor" stroke-width="1.5" marker-end="url(#arr3)"/>
+      <text x="244" y="82" text-anchor="middle" font-size="9" fill="#8b949e">COPY binary</text>
+
+      <!-- Stage 2: runtime -->
+      <rect x="270" y="40" width="200" height="100" rx="5" fill="#21262d" stroke="#3fb950" stroke-width="1.2"/>
+      <text x="280" y="62" font-size="10" fill="#8b949e">Stage 2</text>
+      <text x="370" y="62" text-anchor="middle" font-size="11" fill="#3fb950" font-weight="600">debian:bookworm-slim</text>
+      <text x="370" y="82" text-anchor="middle" font-size="10" fill="#8b949e">voicekit-server binary</text>
+      <text x="370" y="98" text-anchor="middle" font-size="10" fill="#8b949e">libgomp (OpenMP)</text>
+      <text x="370" y="114" text-anchor="middle" font-size="10" fill="#3fb950">image ~20 MB</text>
+
+      <!-- arrow runtime → running container -->
+      <line x1="470" y1="90" x2="518" y2="90" stroke="currentColor" stroke-width="1.5" marker-end="url(#arr3)"/>
+      <text x="494" y="82" text-anchor="middle" font-size="9" fill="#8b949e">docker run</text>
+
+      <!-- Running container -->
+      <rect x="520" y="30" width="200" height="130" rx="5" fill="#21262d" stroke="#d29922" stroke-width="1.2"/>
+      <text x="620" y="52" text-anchor="middle" font-size="11" fill="#d29922" font-weight="600">running container</text>
+      <text x="620" y="70" text-anchor="middle" font-size="10" fill="#8b949e">port 8080 ws://</text>
+      <text x="620" y="88" text-anchor="middle" font-size="10" fill="#8b949e">-v ./models:/models:ro</text>
+      <line x1="540" y1="100" x2="720" y2="100" stroke="#30363d" stroke-width="1"/>
+      <text x="620" y="118" text-anchor="middle" font-size="10" fill="#8b949e">VOICEKIT_CONFIG=/config.toml</text>
+      <text x="620" y="134" text-anchor="middle" font-size="10" fill="#8b949e">VOICEKIT_LOG=info</text>
+      <text x="620" y="150" text-anchor="middle" font-size="9" fill="#6a737d">models never baked in</text>
+
+      <!-- Models volume -->
+      <rect x="20" y="165" width="200" height="28" rx="4" fill="#161b22" stroke="#30363d" stroke-width="1" stroke-dasharray="4,3"/>
+      <text x="120" y="183" text-anchor="middle" font-size="10" fill="#8b949e">./models/ (host volume)</text>
+      <!-- volume mount arrow -->
+      <line x1="120" y1="165" x2="560" y2="140" stroke="#8b949e" stroke-width="1" stroke-dasharray="3,2" marker-end="url(#arr3)" opacity=".5"/>
+    </svg>
+    <figcaption>Multi-stage build keeps the image small. Models are never baked in — they mount from the host at runtime, so updating a model is a file copy, not a rebuild.</figcaption>
+  </figure>
+
+  <div class="code-block" style="margin-top:16px;">
+    <div class="docker-line"><span class="c"># run with default models</span></div>
+    <div class="docker-line"><span class="k">docker run</span> <span class="v">-p 8080:8080</span> \</div>
+    <div class="docker-line">  <span class="v">-v $(pwd)/models:/models:ro</span> \</div>
+    <div class="docker-line">  <span class="v">-v $(pwd)/config.toml:/config.toml:ro</span> \</div>
+    <div class="docker-line">  <span class="k">ghcr.io/voicekit/voicekit-server:latest</span></div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════ -->
+<!--  CLI USAGE                                              -->
+<!-- ═══════════════════════════════════════════════════════ -->
+<section>
+  <h2>voicekit-cli</h2>
+  <div class="code-block">
+    <div class="docker-line"><span class="c"># pull models (runs once, cached to ./models/)</span></div>
+    <div class="docker-line"><span class="k">voicekit</span> pull moonshine-tiny paradee-int8 gemma3-1b-q4</div>
+    <br>
+    <div class="docker-line"><span class="c"># benchmark all engines on this machine</span></div>
+    <div class="docker-line"><span class="k">voicekit</span> bench --config config.toml</div>
+    <br>
+    <div class="docker-line"><span class="c"># health check a running server</span></div>
+    <div class="docker-line"><span class="k">voicekit</span> health ws://localhost:8080</div>
+  </div>
+</section>
+
+</body></html>

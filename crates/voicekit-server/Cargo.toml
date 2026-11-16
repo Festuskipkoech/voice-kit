@@ -1,0 +1,25 @@
+[package]
+name = "voicekit-server"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "voicekit-server"
+path = "src/main.rs"
+
+[dependencies]
+voicekit-core = { path = "../voicekit-core" }
+anyhow.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+clap = { version = "4.6.7", features = ["derive"] }
+
+# WebSocket server - accept TCP connections and upgrade to WebSocket
+tokio-tungstenite = "0.30.0"
+
+# Needed to call accept_async (requires the handshake feature, on by default)
+futures = "0.3"

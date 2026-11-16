@@ -1,0 +1,29 @@
+
+# root cargo
+[workspace]
+members = [
+    "crates/voicekit-core",
+    "crates/voicekit-server",
+    "crates/voicekit-cli",
+    "tests/e2e",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+authors = ["Festus <koechfestus003@gmail.com>"]
+license = "MIT"
+repository = "https://github.com/voicekit/voicekit"
+
+# Shared dependency versions — crates reference these with { workspace = true }
+[workspace.dependencies]
+anyhow = "1.0.104"
+tokio = { version = "1.54.1", features = ["full"] }
+tokio-util = { version = "0.7" }
+serde = { version = "1.0.229", features = ["derive"] }
+markdown-strip = "0.1"
+rehuman = "0.2.0"
+toml = "1.2.0+spec-1.1.0"
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }

@@ -1,0 +1,21 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "voicekit"
+version = "0.1.0"
+description = "Python SDK for the Voicekit voice-agent server"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+dependencies = ["websockets>=17.3", "sounddevice>=0.5.6", "numpy>=2.5.4"]
+
+[dependency-groups]
+dev = ["pytest>=8.0", "pytest-asyncio>=0.24", "ruff>=0.9"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+
+[tool.hatch.build.targets.wheel]
+packages = ["voicekit"]

@@ -1,0 +1,33 @@
+# Models - never commit weights
+models/
+/target
+/voicekit-data
+*.gguf
+*.onnx
+
+# Environment
+.env
+
+# Rust build output
+target/
+Cargo.lock
+
+# macOS
+.DS_Store
+
+config.local.toml
+
+# Editor
+.vscode/
+.idea/
+*.swp
+
+run.log
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+dist/
+uv.lock

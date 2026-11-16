@@ -1,0 +1,44 @@
+# Internal model registry — baked into the Docker image at /etc/voicekit/models.toml.
+# Not operator-editable. SHA256 checksums verified 2026-11-14.
+
+[models.moonshine-tiny]
+repo = "techy21/voicekit-models"
+path = "moonshine/tiny"
+files = [
+    "onnx/encoder_model_quantized.onnx",
+    "onnx/decoder_model_merged_quantized.onnx",
+    "tokenizer.json",
+    "tokenizer_config.json",
+]
+
+[models.moonshine-tiny.sha256]
+"onnx/encoder_model_quantized.onnx" = "c6fc4b7bc5af75c0591fd157a1f3829b533d18e9769a888fd95a62e470dd4f4a"
+"onnx/decoder_model_merged_quantized.onnx" = "eed87831c3a6103534aae7d47a5d485025c659a1323901513961c39fe8a1a367"
+"tokenizer.json" = "7b913404bdd039af4756783218af4440bc07fb7d6d8258d677e34f95b3ec416f"
+"tokenizer_config.json" = "edaee394565d428ea98a663ae7209cdcfeefc5585c42d7a570ff7c986df2cd15"
+
+[models.silero-vad]
+repo = "techy21/voicekit-models"
+path = "silero"
+files = ["silero_vad.onnx"]
+
+[models.silero-vad.sha256]
+"silero_vad.onnx" = "2623a2953f6ff3d2c1e61740c6cdb7168133479b267dfef114a4a3cc5bdd788f"
+
+[models.gemma3-1b-q4]
+repo = "techy21/voicekit-models"
+path = "llm"
+files = ["gemma-3-1b-it-Q4_K_M.gguf"]
+
+[models.gemma3-1b-q4.sha256]
+"gemma-3-1b-it-Q4_K_M.gguf" = "8270790f3ab69fdfe860b7b64008d9a19986d8df7e407bb018184caa08798ebd"
+
+[models.paradee-int8]
+repo = "techy21/voicekit-models"
+path = "paradee"
+files = ["onnx/paradee_int8.onnx", "tokenizer.json", "config.json"]
+
+[models.paradee-int8.sha256]
+"onnx/paradee_int8.onnx" = "a6989796692ac173597e15d405c971989202d5c73cfad65f22e90bd7b6c97da1"
+"tokenizer.json" = "77a02c8e164413299b4b4c403b14f8e0e1c1b727db4d46a09d6327b861060a34"
+"config.json" = "002535cf8dd08a434cdddb13372da8a7b4844152bdf9b5b4e7342e12ec30bcfb"

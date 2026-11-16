@@ -1,0 +1,51 @@
+services:
+
+  # writes ./voicekit-data/config.toml from the template if missing
+  config-init:
+    image: python:3.12-slim
+    volumes:
+      - ./voicekit-data:/data
+      - ./config.template.toml:/etc/voicekit/config.template.toml:ro
+      - ./scripts/init_config.sh:/init_config.sh:ro
+    entrypoint: ["sh", "/init_config.sh"]
+    restart: "no"
+
+  # downloads and verifies model weights into ./models
+  model-init:
+    build:
+      context: .
+      dockerfile: Dockerfile.tools
+    volumes:
+      - ./models:/models
+      - ./voicekit-data:/data:ro
+      - ./scripts/download_models.py:/download_models.py:ro
+      - ./models.toml:/etc/voicekit/models.toml:ro 
+    entrypoint: ["python3", "-I", "/download_models.py", "--config", "/data/config.toml", "--dest", "/models"]
+    depends_on:
+      config-init:
+        condition: service_completed_successfully
+    restart: "no"
+
+  voicekit-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "${VOICEKIT_PORT:-8080}:8080"
+    volumes:
+      - ./models:/models:ro
+      - ./voicekit-data/config.toml:/data/config.toml:ro
+    environment:
+      RUST_LOG: "${RUST_LOG:-voicekit=info}"
+    depends_on:
+      config-init:
+        condition: service_completed_successfully
+      model-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s

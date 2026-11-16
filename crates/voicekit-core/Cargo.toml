@@ -1,0 +1,93 @@
+[package]
+name = "voicekit-core"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+autotests = false
+
+[features]
+# Integration tests require real model files. Gate them behind this feature
+# so they never run in CI unless VOICEKIT_INTEGRATION=1 is set.
+integration = []
+
+[dependencies]
+anyhow.workspace = true
+serde.workspace = true
+toml.workspace = true
+tokio.workspace = true
+markdown-strip.workspace = true
+rehuman.workspace = true
+tracing.workspace = true
+
+# ONNX Runtime - VAD, STT, TTS inference
+ort = { version = "2.0.0-rc.15", features = ["copy-dylibs"] }
+
+# GGUF / llama.cpp - LLM inference
+llama-cpp-2 = "0.1.161"
+
+# Sentence boundary detection
+sentencex = "0.1.34"
+
+# Tokenizer JSON parsing
+serde_json = "1.0.154"
+
+# G2P for TTS phonemization (Kokoro/Paradee pipeline)
+misaki-rs = "0.9.0"
+
+# WebSocket stream type exposed in session::run_session public API
+tokio-tungstenite = "0.30.0"
+
+# Cancellation for in-flight LLM tasks on client disconnect
+tokio-util = "0.7"
+
+# Stream/Sink combinators for WebSocket I/O
+futures = "0.3"
+
+# Binary frame payload type (tungstenite 0.26+ uses Bytes for Message::Binary)
+bytes = "1"
+
+[dev-dependencies]
+tokio = { version = "1.54.1", features = ["full", "test-util"] }
+hound = "3.5.1"
+tempfile = "3.27.0"
+# Needed by session integration test to open a client-side WebSocket
+tokio-tungstenite = "0.30.0"
+futures = "0.3"
+bytes = "1"
+
+[[test]]
+name = "session_test"
+path = "tests/session_test.rs"
+
+[[test]]
+name = "vad_test"
+path = "tests/vad_test.rs"
+
+[[test]]
+name = "sentence_test"
+path = "tests/sentence_test.rs"
+
+[[test]]
+name = "text_clean_test"
+path = "tests/text_clean_test.rs"
+
+[[test]]
+name = "stt_test"
+path = "tests/integration/stt_test.rs"
+required-features = ["integration"]
+
+[[test]]
+name = "llm_test"
+path = "tests/integration/llm_test.rs"
+required-features = ["integration"]
+
+[[test]]
+name = "tts_test"
+path = "tests/integration/tts_test.rs"
+required-features = ["integration"]
+
+[[test]]
+name = "session_integration_test"
+path = "tests/integration/session_test.rs"
+required-features = ["integration"]

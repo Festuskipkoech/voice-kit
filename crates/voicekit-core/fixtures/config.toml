@@ -1,0 +1,31 @@
+[server]
+host = "127.0.0.1"
+port = 8080
+max_connections = 10
+
+[session_policy]
+allow_system_prompt_override = true
+allow_voice_override = true
+allow_vad_override = true
+
+[vad]
+model = "silero-vad"
+threshold = 0.5
+silence_ms = 800
+chunk_samples = 512
+
+[stt]
+provider = "moonshine"
+model = "moonshine-tiny"
+
+[llm]
+provider = "llamacpp"
+model = "gemma3-1b-q4"
+system_prompt = "You are a helpful voice assistant. Keep answers short and conversational."
+context_size = 512
+
+[tts]
+provider = "paradee"
+model = "paradee-int8"
+voice = "af_heart"
+sample_rate = 24000

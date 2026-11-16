@@ -1,0 +1,24 @@
+[package]
+name = "e2e"
+version.workspace = true
+edition.workspace = true
+
+[features]
+# Gate real-model E2E tests behind this feature.
+# Run with: VOICEKIT_INTEGRATION=1 cargo test -p e2e --features integration
+integration = ["voicekit-core/integration"]
+
+[[test]]
+name = "pipeline"
+path = "src/pipeline_test.rs"
+required-features = ["integration"]
+
+[dependencies]
+voicekit-core = { path = "../../crates/voicekit-core" }
+anyhow.workspace = true
+tokio.workspace = true
+hound = "3.5"
+tokio-tungstenite = "0.30.0"
+futures = "0.3"
+bytes = "1"
+serde_json = "1.0.154"
