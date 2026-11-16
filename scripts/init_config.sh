@@ -40,6 +40,7 @@ echo "Edit ./voicekit-data/config.toml then: docker compose up voicekit-server"
 echo ""
 
 mkdir -p "$(dirname "$CONFIG_PATH")"
+chmod 777 "$(dirname "$CONFIG_PATH")"
 cp "$TEMPLATE_PATH" "$CONFIG_PATH"
 
 echo "[config-init] done."
