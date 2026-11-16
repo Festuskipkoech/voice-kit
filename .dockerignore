@@ -1,0 +1,6 @@
+models/
+voicekit-data/
+target/
+.git/
+.env
+*.log

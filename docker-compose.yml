@@ -4,6 +4,7 @@ services:
   # On subsequent runs validates the existing config and exits.
   config-init:
     image: ghcr.io/festuskipkoech/voicekit:latest
+    user: root
     entrypoint: ["sh", "/etc/voicekit/init_config.sh"]
     volumes:
       - ./voicekit-data:/data
