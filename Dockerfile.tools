@@ -1,8 +1,0 @@
-FROM python:3.12-slim
-
-# hf_xet is included by default in modern huggingface_hub versions
-RUN pip install --no-cache-dir "huggingface_hub>=1.0" tomli
-
-# Enables maximum throughput for hf_xet on high-bandwidth connections
-ENV HF_XET_HIGH_PERFORMANCE=1
-ENV HF_HOME=/models/.hf_cache

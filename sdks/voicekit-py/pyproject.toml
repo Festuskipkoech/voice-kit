@@ -3,12 +3,33 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "voicekit"
+name = "voicekit-py"
 version = "0.1.0"
 description = "Python SDK for the Voicekit voice-agent server"
+readme = "README.md"
 requires-python = ">=3.12"
 license = { text = "MIT" }
-dependencies = ["websockets>=17.3", "sounddevice>=0.5.6", "numpy>=2.5.4"]
+authors = [{ name = "Festus Kipkoech", email = "koechfestus003@gmail.com" }]
+keywords = ["voice", "speech", "tts", "stt", "websocket", "agent"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Multimedia :: Sound/Audio :: Speech",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+dependencies = [
+    "websockets>=17.3",
+    "sounddevice>=0.5.6",
+    "numpy>=2.5.4",
+]
+
+[project.urls]
+Homepage = "https://github.com/festuskipkoech/voicekit"
+Repository = "https://github.com/festuskipkoech/voicekit"
+Issues = "https://github.com/festuskipkoech/voicekit/issues"
 
 [dependency-groups]
 dev = ["pytest>=8.0", "pytest-asyncio>=0.24", "ruff>=0.9"]

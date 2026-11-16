@@ -26,20 +26,15 @@ Visual reference for Voicekit's architecture. For prose explanations see [ARCHIT
                │  SttEngine  LlmEngine         │
                │  TtsEngine  VAD  Session      │
                └───────────────────────────────┘
-                               ▲
-               ┌───────────────┘  Rust crate dep
-               │
-   ┌───────────┴───────────┐
-   │    voicekit-cli        │
-   │  pull · bench · health │
-   └───────────────────────┘
 ```
 
-SDKs connect over WebSocket. The server and CLI are both thin binaries that link voicekit-core. voicekit-core owns all inference logic.
+SDKs connect over WebSocket. The server is a thin binary that links `voicekit-core`. `voicekit-core` owns all inference logic.
+
+> **Note:** `voicekit-cli` is paused and not part of the current release.
 
 ---
 
-## Real-time pipeline — one WebSocket session
+## Real-time pipeline - one WebSocket session
 
 ```
 Client (mic PCM 16kHz f32)
@@ -47,7 +42,7 @@ Client (mic PCM 16kHz f32)
     │  ws:// binary frames (512 samples / 32 ms)
     ▼
 ┌──────────────────────────────────────────────────────────────────┐
-│  tokio::spawn — one task per session                             │
+│  tokio::spawn - one task per session                             │
 │                                                                  │
 │  ┌─────────────┐    utterance   ┌─────────────┐    text         │
 │  │    VAD      │ ─────────────► │    STT      │ ───────────►    │
@@ -64,21 +59,22 @@ Client (mic PCM 16kHz f32)
 │                                              └───────┬────────┘ │
 │                                                      │ tokens   │
 │                                                      ▼          │
-│  ┌─────────────┐  sentence  ┌───────────────────────────────┐  │
-│  │    TTS      │ ◄───────── │       Sentence Buffer         │  │
-│  │  Paradee    │            │  sentencex · flush on . ? !   │  │
-│  │  int8 ONNX  │            │  or 200-char hard cap         │  │
-│  │  ~708 ms    │            └───────────────────────────────┘  │
-│  └──────┬──────┘                                               │
-│         │  audio PCM 24 kHz                                    │
-└─────────┼────────────────────────────────────────────────────-─┘
-          │
-          │  ws:// binary frames
-          ▼
-     Client (speaker)
+│  ┌──────────────────┐  sentence  ┌─────────────────────────┐   │
+│  │   text_clean     │            │     Sentence Buffer     │   │
+│  │       +          │ ◄───────── │  sentencex · . ? !      │   │
+│  │      TTS         │            │  or 200-char hard cap   │   │
+│  │  Paradee int8    │            └─────────────────────────┘   │
+│  │  ~708 ms         │                                           │
+│  └────────┬─────────┘                                           │
+│           │  audio PCM 24 kHz                                   │
+└───────────┼─────────────────────────────────────────────────────┘
+            │
+            │  ws:// binary frames
+            ▼
+       Client (speaker)
 ```
 
-**Key:** LLM and TTS run in parallel after the first sentence boundary. The client hears audio before the LLM finishes generating.
+**Key:** LLM and TTS run in parallel after the first sentence boundary. The client hears audio before the LLM finishes generating. Each sentence is cleaned through `text_clean` before reaching TTS.
 
 ---
 
@@ -93,12 +89,12 @@ append to buffer
     ▼
 sentencex detects boundary?
     │
-    ├─ YES → flush up to boundary → TTS call → write audio to socket
+    ├─ YES → flush up to boundary → text_clean → TTS → write audio to socket
     │         keep remainder in buffer
     │
     └─ NO  → buffer length ≥ 200 chars?
                  │
-                 ├─ YES → flush whole buffer → TTS call → write audio to socket
+                 ├─ YES → flush whole buffer → text_clean → TTS → write audio to socket
                  │
                  └─ NO  → wait for next token
 
@@ -110,27 +106,27 @@ generation complete → flush any remaining buffer (even if no boundary)
 ## VAD state machine
 
 ```
-                        ┌─────────────┐
-                        │   SILENCE   │◄──────────────────────────┐
-                        └──────┬──────┘                            │
-                               │ score ≥ 0.5                       │
-                               ▼                                   │
-                        ┌─────────────┐                            │
-                 ┌──────│   SPEECH    │──────┐                     │
-                 │      └─────────────┘      │                     │
-      score ≥ 0.5│                           │score < 0.5          │
-         (stays) │                           ▼                     │
-                 │                  ┌─────────────────┐            │
-                 └──────────────────│ SILENCE COUNTER │            │
-                                    │  < 25 chunks    │            │
-                                    └────────┬────────┘            │
-                                             │ ≥ 25 chunks         │
-                                             │ (800 ms)            │
-                                             ▼                     │
-                                    ┌─────────────────┐            │
-                                    │  DISPATCH STT   │────────────┘
-                                    │  clear buffer   │
-                                    └─────────────────┘
+                    ┌─────────────┐
+                    │   SILENCE   │◄──────────────────────────┐
+                    └──────┬──────┘                            │
+                           │ score ≥ 0.5                       │
+                           ▼                                   │
+                    ┌─────────────┐                            │
+             ┌──────│   SPEECH    │──────┐                     │
+             │      └─────────────┘      │                     │
+  score ≥ 0.5│                           │score < 0.5          │
+     (stays) │                           ▼                     │
+             │                  ┌─────────────────┐            │
+             └──────────────────│ SILENCE COUNTER │            │
+                                │  < 25 chunks    │            │
+                                └────────┬────────┘            │
+                                         │ ≥ 25 chunks         │
+                                         │ (800 ms)            │
+                                         ▼                     │
+                                ┌─────────────────┐            │
+                                │  DISPATCH STT   │────────────┘
+                                │  clear buffer   │
+                                └─────────────────┘
 ```
 
 ---
@@ -139,37 +135,55 @@ generation complete → flush any remaining buffer (even if no boundary)
 
 ```
  ┌─────────────────────────────────┐
- │  Stage 1: rust:1.82-slim        │
+ │  Stage 1: rust:1.92-slim        │
  │  cargo build --release          │
  │  → /app/voicekit-server         │
  └────────────────┬────────────────┘
                   │ COPY binary
                   ▼
  ┌─────────────────────────────────┐
- │  Stage 2: debian:bookworm-slim  │
+ │  Stage 2: debian:trixie-slim    │
  │  voicekit-server binary         │
  │  libgomp (OpenMP / ONNX)        │
- │  ~20 MB total                   │
+ │  operator scripts baked in      │
+ │  ~20 MB total (no models)       │
  └────────────────┬────────────────┘
                   │ docker run
                   ▼
  ┌─────────────────────────────────────────┐
  │  container                              │
  │  port 8080  ws://                       │
- │  /models   ← mounted from host (ro)    │  ← models never baked in
- │  /config.toml ← mounted from host (ro) │
+ │  /models        ← mounted from host    │  ← models never baked in
+ │  /data/config.toml ← mounted from host │
  └─────────────────────────────────────────┘
           ▲
-          │ -v $(pwd)/models:/models:ro
- ┌────────┴───────────┐
- │  host ./models/    │
- │  moonshine-tiny    │
- │  paradee-int8      │
- │  gemma3-1b-q4.gguf │
- └────────────────────┘
+          │ volumes
+ ┌────────┴───────────────┐
+ │  host ./models/        │
+ │  moonshine/tiny/       │
+ │  paradee/              │
+ │  llm/                  │
+ │    gemma-3-1b-it.gguf  │
+ │  silero/               │
+ │    silero_vad.onnx     │
+ └────────────────────────┘
 ```
 
-Updating a model: copy the new file to `./models/`, restart the container. No image rebuild.
+Updating a model: copy the new files to `./models/`, restart the container. No image rebuild.
+
+---
+
+## Model path resolution
+
+| Config key | Registry entry | Resolved to | Received by engine |
+|---|---|---|---|
+| `stt.model = "moonshine-tiny"` | `path = "moonshine/tiny"` | directory | STT engine |
+| `tts.model = "paradee-int8"` | `path = "paradee"` | directory | TTS engine |
+| `llm.model = "gemma3-1b-q4"` | `path = "llm"` + `files[0]` | single file | LLM engine |
+| `vad.model = "silero-vad"` | `path = "silero"` + `files[0]` | single file | VAD engine |
+
+**STT and TTS receive a directory.** ONNX-based engines load multiple artefacts internally.  
+**LLM and VAD receive a specific file.** Each has a single primary binary.
 
 ---
 
@@ -184,19 +198,20 @@ config.toml
          ▼ startup
   EngineFactory::build(&config)
          │
-         ├─ "moonshine" → Box<dyn SttEngine> (MoonshineEngine)
-         ├─ "llamacpp"  → Box<dyn LlmEngine> (LlamaCppEngine)
-         └─ "paradee"   → Box<dyn TtsEngine> (ParadeeEngine)
+         ├─ "moonshine" → Box<dyn SttEngine>  (MoonshineEngine)
+         ├─ "llamacpp"  → Box<dyn LlmEngine>  (LlamaCppEngine)
+         └─ "paradee"   → Box<dyn TtsEngine>  (ParadeeEngine)
                  │
                  ▼ Arc-wrapped, shared across sessions
          Session { stt, llm, tts }
 ```
 
-Adding a new model: implement the trait, register the provider string in the factory, ship the binary. Session loop unchanged.
+Adding a new engine: implement the trait, register the provider string in the factory. The session loop is unchanged.
 
 ---
 
 ## Related
 
-- [ARCHITECTURE.md](Architecture.md) — full prose explanation of every decision shown here
-- [FLOW.md](FLOW.md) — runtime behaviour, edge cases, what is not in v1
+- [ARCHITECTURE.md](ARCHITECTURE.md) - full prose explanation of every decision shown here
+- [FLOW.md](FLOW.md) - runtime behaviour, edge cases, what is not in v1
+- [PROTOCOL.md](PROTOCOL.md) - wire protocol between server and any client or SDK

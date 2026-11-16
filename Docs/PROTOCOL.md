@@ -1,4 +1,4 @@
-# Voicekit Wire Protocol — v1
+# Voicekit Wire Protocol - v1
 
 This document is the complete contract between a Voicekit server and any client
 or SDK. Implement against this spec; do not read server source code to infer
@@ -28,7 +28,7 @@ ws://host:port
 ```
 
 No path, no subprotocol header required. Connect and immediately send the
-handshake — do not send audio before `session.ready` is received.
+handshake - do not send audio before `session.ready` is received.
 
 TLS: use `wss://` in production. The server accepts both; TLS termination is
 handled by a reverse proxy in front of the server.
@@ -179,10 +179,10 @@ All control frames are JSON text frames with a `type` field.
 
 | Code | Meaning |
 |---|---|
-| `1000` | Normal closure — client sent Close frame |
-| `1001` | Going away — idle timeout or server shutdown |
-| `1002` | Protocol error — malformed frame or wrong frame type |
-| `1008` | Policy violation — override denied by session policy |
+| `1000` | Normal closure - client sent Close frame |
+| `1001` | Going away - idle timeout or server shutdown |
+| `1002` | Protocol error - malformed frame or wrong frame type |
+| `1008` | Policy violation - override denied by session policy |
 | `4000`–`4999` | Reserved for future Voicekit application codes |
 
 Always handle `1001` with a reconnect attempt. Treat `1008` as a configuration
@@ -278,9 +278,9 @@ SERVER CLOSE ← code 1002
 
 - [ ] Connect, send `session.config`, wait for `session.ready` before streaming
 - [ ] Send exactly 512 samples per binary frame
-- [ ] Handle `session.error` — log `message`, do not retry immediately
+- [ ] Handle `session.error` - log `message`, do not retry immediately
 - [ ] Reply to Ping frames with Pong (most WebSocket libraries do this automatically)
 - [ ] Handle close code `1001` with exponential-backoff reconnect
-- [ ] Handle close code `1008` as a configuration error — do not reconnect
+- [ ] Handle close code `1008` as a configuration error - do not reconnect
 - [ ] Play received binary audio frames in order without buffering delays
 - [ ] Send Close frame when the user ends the session

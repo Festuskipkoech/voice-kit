@@ -171,6 +171,21 @@ clean-fixtures:
 clean-orphans:
 	docker compose down --remove-orphans
 
+# Docker image
+
+IMAGE := ghcr.io/festuskipkoech/voicekit
+
+.PHONY: docker-build
+docker-build:
+	docker build -t $(IMAGE):latest .
+
+.PHONY: docker-push
+docker-push:
+	docker push $(IMAGE):latest
+
+.PHONY: docker-release
+docker-release: docker-build docker-push
+
 # CI - no model files required
 
 .PHONY: ci

@@ -5,8 +5,10 @@ AudioCapture  - reads from the microphone, yields 512-sample f32 frames
                 via an asyncio.Queue, decoupling the PortAudio callback
                 thread from the event loop.
 
-AudioPlayer   - receives f32 frames from an asyncio.Queue and plays them
-                through the default output device.
+AudioPlayer   - buffers received f32 frames in an asyncio.Queue and drains
+                them through a single background writer task, so concurrent
+                frame arrivals never race on the output stream and ALSA is
+                fed at a steady rate.
 """
 
 from __future__ import annotations
@@ -62,7 +64,6 @@ class AudioCapture:
             self._stream.stop()
             self._stream.close()
             self._stream = None
-        # signal the iterator to stop
         await self._queue.put(None)
 
     def _callback(
@@ -72,7 +73,6 @@ class AudioCapture:
         time,
         status: sd.CallbackFlags,
     ) -> None:
-        # indata shape: (FRAME_SAMPLES, 1) - squeeze to 1-D
         frame = indata[:, 0].copy()
         assert self._loop is not None
         self._loop.call_soon_threadsafe(self._queue.put_nowait, frame)
@@ -91,6 +91,11 @@ class AudioPlayer:
     """
     Plays audio frames received from the server.
 
+    Frames are enqueued by play() and written to the output stream by a
+    single background task.  This prevents concurrent stream.write() calls
+    (which cause ALSA mmap errors) and absorbs network bursts without
+    stalling the event loop.
+
     Usage::
 
         async with AudioPlayer() as player:
@@ -98,32 +103,54 @@ class AudioPlayer:
                 await player.play(audio_frame)
     """
 
-    def __init__(self, device: Optional[int | str] = None) -> None:
+    def __init__(
+        self,
+        device: Optional[int | str] = None,
+        queue_maxsize: int = 128,
+    ) -> None:
         self._device = device
+        self._queue: asyncio.Queue[Optional[np.ndarray]] = asyncio.Queue(
+            maxsize=queue_maxsize
+        )
         self._stream: Optional[sd.OutputStream] = None
+        self._writer_task: Optional[asyncio.Task] = None
 
     async def __aenter__(self) -> "AudioPlayer":
         self._stream = sd.OutputStream(
             samplerate=TTS_SAMPLE_RATE,
             channels=1,
             dtype="float32",
+            blocksize=FRAME_SAMPLES,
             device=self._device,
         )
         self._stream.start()
+        self._writer_task = asyncio.create_task(self._writer())
         return self
 
     async def __aexit__(self, *_) -> None:
+        # Drain the queue before closing so the last chunk is not cut off.
+        await self._queue.put(None)
+        if self._writer_task is not None:
+            await self._writer_task
+            self._writer_task = None
         if self._stream is not None:
             self._stream.stop()
             self._stream.close()
             self._stream = None
 
+    async def _writer(self) -> None:
+        """Single background task: dequeues frames and writes them serially."""
+        loop = asyncio.get_running_loop()
+        while True:
+            samples = await self._queue.get()
+            if samples is None:
+                break
+            await loop.run_in_executor(
+                None, self._stream.write, samples.astype(np.float32)
+            )
+
     async def play(self, samples: np.ndarray) -> None:
-        """
-        Write samples to the output stream.  Runs the blocking write in a
-        thread executor so the event loop is not stalled.
-        """
+        """Enqueue samples for playback.  Returns immediately."""
         if self._stream is None:
             raise RuntimeError("AudioPlayer is not open")
-        loop = asyncio.get_running_loop()
-        await loop.run_in_executor(None, self._stream.write, samples.astype(np.float32))
+        await self._queue.put(samples)
