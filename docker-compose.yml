@@ -14,7 +14,9 @@ services:
   # Skips files that are already present and checksums match.
   model-init:
     image: ghcr.io/festuskipkoech/voicekit:latest
+    user: root
     entrypoint:
+
       - python3
       - -I
       - /etc/voicekit/download_models.py
